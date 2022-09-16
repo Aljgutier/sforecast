@@ -140,3 +140,9 @@ dmypy.json
 
 # MacOS
 .DS_Store
+
+
+# data
+data/superstore_subcatsales_cdp.csv
+data/superstore_prodsales_cdp.csv
+data/superstore_catsales_cdp.csv
