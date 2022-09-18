@@ -51,12 +51,15 @@ Add Dev Packages with poetry ... Jupyter notebook
 > poetry add --dev xlrd
 ``
 
-Testing
-  * poetry add --dev pytest
-  * create test file in tests/test_sw_forecast.py
-  * pytest tests/  # run tests
-  * poetry add --dev pytest-cov # test coverage
-  * pytest tests/ --cov=beautifulplots
+Tests
+  * Poetry adds
+    * poetry add --dev pytest
+    * poetry add --dev pytest-cov # test coverage
+
+  * testing with pytest
+    * create test file in tests/test_sforecast.py
+    * pytest tests/  # run tests
+    * pytest tests/ --cov=sforecast
 
 
 Documentation

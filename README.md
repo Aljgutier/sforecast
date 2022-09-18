@@ -1,6 +1,6 @@
 # sforecast
 
-A package to support supervised learning forecast methods (ML and DL) within a sliding forecast framework (sliding window or expanding window)
+A package to support supervised learning forecast methods (ML and DL) within a sliding forecast framework (sliding or expanding window)
 
 ## Installation
 
