@@ -1,8 +1,8 @@
-
 from sklearn.metrics import mean_squared_error as MSE
 from sklearn.metrics import mean_absolute_error as MAE
 from scipy.stats import t
 from sklearn.base import clone
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import numpy as np
 import pandas as pd
 
@@ -140,7 +140,7 @@ def nlag_arvars(df,ar_vars, N_lags):
         
     return dfXY
 
-def _min_func(x,minvalue):
+def min_func(x,minvalue):
     """return x if greater than minvalue, otherwise return minvalue. Vectorized into max_vfunc for use by numpy.
 
     Args:
@@ -154,7 +154,7 @@ def _min_func(x,minvalue):
         x = x if x > minvalue else minvalue
     return x
 
-def _max_func(x,maxvalue):
+def max_func(x,maxvalue):
     """return x if less than maxvalue, otherwise return max value. Vectorized into min_vfunc for use by numpy array.
 
     Args:
@@ -168,12 +168,12 @@ def _max_func(x,maxvalue):
         x = x if x < maxvalue else maxvalue
     return x
 
-min_vfunc = np.vectorize(_min_func)
-max_vfunc = np.vectorize(_max_func)
+min_vfunc = np.vectorize(min_func)
+max_vfunc = np.vectorize(max_func)
 
 def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
                      Nlag=1, Nobserve=None, Npred = 1,  Nhorizon=1, i_start = None, 
-                     idx_start=None, alpha = 0.2, ci_method="linear",verbose = False):
+                     idx_start=None, alpha = 0.2, ci_method="linear", mms_cols = None, ss_cols=None,  verbose = False):
     
     '''Receives as input DataFrame of X (exogenous + co-vvariates)  and Y (univariate or multivariate), and an untrained model.
 
@@ -203,6 +203,11 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
                 * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
                 * "minmax" - the min and max values observed errors
                 * "tdistribution" - compute the t-distribution confidence interval
+                
+
+        mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = a list of columns then the corresponding columns are scaled with the MinMax scaler.
+                
+        ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
             
         verbose: True or False. Defaults to False.
 
@@ -220,6 +225,7 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
     y = [y] if isinstance(y,str) else y
     if co_vars == None: co_vars = []
     co_vars = [co_vars] if isinstance(co_vars,str) else co_vars
+
     for _y in  y: 
         if _y not in co_vars: co_vars.append(_y)   
     
@@ -234,11 +240,36 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
     
     # copy the input dataframe to ensure the original is not modified
     dfXYfc = dfXY.copy()
-
-    # auto-regressive lags
+    
+        # auto-regressive lags
     if Nlag > 0:
         dfXYfc = nlag_arvars(dfXY,co_vars, Nlag)
         dfXYfc = dfXYfc.iloc[Nlag:].copy()  # delete the first Nlag rows since they will contain NaNs
+
+    # Scale the X inputs ... keep the unscaled y (target variables) lag and exogenous variables are scaled
+    if mms_cols != None:
+        if (mms_cols == "all") & (ss_cols != "all"): 
+            mms_scaler =  MinMaxScaler()
+            dfXYfc_scaled = mms_scaler.fit_transform(dfXYfc).copy()
+            dfXYfc_scaled = pd.DataFrame(dfXYfc_scaled, columns = dfXYfc.columns, index = dfXYfc.index)
+        elif mms_cols != "all":
+            mms_scaler =  MinMaxScaler()
+            dfXYfc_scaled = dfXYfc.copy
+            dfXYfc_scaled[mms_cols] = mms_scaler.fit_transform(dfXYfc_scaled[mms_cols])
+        dfXYfc_scaled[y] = dfXYfc[y]
+    
+    if ss_cols != None:
+        if ss_cols == "all":
+            ss_scaler = StandardScaler()
+            dfXYfc_scaled = ss_scaler(dfXYfc).copy()
+            dfXYfc_scaled = pd.DataFrame(dfXYfc_scaled, columns = dfXYfc.columns, index = dfXYfc.index)
+        else:
+            ss_scaler = StandardScaler()
+            dfXYfc_scaled = dfXYfc.copy()
+            dfXYfc_scaled[ss_cols] = ss_scaler.fit_transform(dfXYfc_scaled[ss_cols])
+        dfXYfc_scaled[y] = dfXYfc[y]
+
+    dfXYfc = dfXYfc_scaled # dfXYfc_scaled replaces the original dfXYfc DataFrame
     
     # sliding window variables
     N = dfXYfc.index.size # total observations
@@ -256,7 +287,7 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
     #### for each target ###
     df_pred=pd.DataFrame()
     X_columns = list(dfXYfc.columns)
-
+    
     # remove covariates from target  from X
     for cv in co_vars:
         X_columns.remove(cv)
@@ -306,7 +337,6 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
                 if verbose == True:
                     print(f'   y_test = {y_test}  y_pred = {y_pred[0]}')      
         
-
                         
         # y_pred, y_train, y_test
         # apply min max limits to the forecast
@@ -315,6 +345,8 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
         
 
         errors=list(np.array(y_test_values) - np.array(y_pred_values))
+        
+        
         _df_pred = pd.DataFrame(index=dfXYfc.index) # keep the index from dfXYfc
         idx = dfXYfc.iloc[y_pred_idx].index # prediction indexes
         _df_pred[ytrain_col] = dfXYfc.iloc[i0:i_initial][_y] # y train
@@ -338,9 +370,8 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
         _df_pred[ypred_upper] = _df_pred[ypred_col] + _df_pred["error_upper"]
 
         # Apply minmax to CIs
-
-        _df_pred[ypred_lower] = _df_pred[ypred_lower].apply(lambda x: _min_func(x,_minmax[0][0])) if _minmax[0][0]!=None else  _df_pred[ypred_lower]
-        _df_pred[ypred_upper] = _df_pred[ypred_upper].apply(lambda x: _max_func(x,_minmax[0][1])) if _minmax[0][1]!=None else  _df_pred[ypred_upper]
+        _df_pred[ypred_lower] = _df_pred[ypred_lower].apply(lambda x: min_func(x,_minmax[0][0])) if _minmax[0][0]!=None else  _df_pred[ypred_lower]
+        _df_pred[ypred_upper] = _df_pred[ypred_upper].apply(lambda x: max_func(x,_minmax[0][1])) if _minmax[0][1]!=None else  _df_pred[ypred_upper]
        
        # drop error_lower and error_upper
         _df_pred=_df_pred.drop(["error_lower","error_upper"],axis=1)    
@@ -352,7 +383,6 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
         if verbose == True:
             print(f'\nmetrics = {metrics}')
             
-
 
     return dfXYfc, df_pred, metrics, m
 
@@ -395,6 +425,12 @@ class sforecast:
                     * "minmax" - the min and max values observed errors
                     * "tdistribution" - compute the t-distribution confidence interval
             
+            xscale (dictionary): input variables are scaled according as designated by the parameters in the xscale dictionary.
+            
+                mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = a list of columns then the corresponding columns are scaled with the MinMax scaler.
+                
+                ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
+            
             minmax (2-tuple): forecassts predictions and ci (confidence intervals) are constrained to fall between minmax[0] and minmax[1], given the corresponding min or max is != None, correspondingly. Defaults to (None, None).
         
     
@@ -413,7 +449,7 @@ class sforecast:
         df_pred (DataFrame): Dataframe containing the prediciton results. See sforecast.forecast() for additional information.
 
     """
-    def __init__(self,  y="y", model=None, ts_parameters=None):
+    def __init__(self,  y="y", model=None, xscale = None, ts_parameters=[None]):
   
         # initialize variables
         self.ts_params = {
@@ -429,15 +465,25 @@ class sforecast:
             "minmax":(None,None)
         }
         
+        self.xscale = {
+            "mms_cols":"all",
+            "ss_cols":None
+        }
+        
         self.y = y
         self.model = model
         
-        for k in ts_parameters:
-            assert self.ts_params.__contains__(k), f'ts_parameters key  = {k}, is not valid'
-            self.ts_params[k] = ts_parameters[k]
+        if ts_parameters != None:
+            for k in ts_parameters:
+                assert self.ts_params.__contains__(k), f'ts_parameters  = {k} is not valid'
+                self.ts_params[k] = ts_parameters[k]
+        
+        if xscale != None:
+            for k in xscale:
+                assert self.xscale.__contains__(k), f'xscale parameter = {k} is not valid'
+                self.xscale[k] = xscale[k]
             
         assert self.y != None, f'y forecast variable(s) not specified'
-        
         assert self.model != None, "model must be defined"
 
 
@@ -459,7 +505,7 @@ class sforecast:
         """
         
         assert isinstance(dfXY, pd.DataFrame)
-        df_forecast = pd.DataFrame()
+
  
         self.dfXYfc, self.df_pred, self.metrics, self.model = sliding_forecast(dfXY, y = self.y, model=self.model, 
                     co_vars=self.ts_params["co_vars"], minmax=self.ts_params["minmax"],
@@ -467,6 +513,7 @@ class sforecast:
                     Npred = self.ts_params["Npred"],  Nhorizon=self.ts_params["Nhorizon"], 
                     i_start = self.ts_params["i_start"], idx_start=self.ts_params["idx_start"],
                     alpha = self.ts_params["alpha"],ci_method= self.ts_params["ci_method"],
+                    mms_cols = self.xscale["mms_cols"], ss_cols = self.xscale["ss_cols"],
                     verbose = False)
         
  
