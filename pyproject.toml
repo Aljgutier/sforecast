@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sforecast"
-version = "0.1.0"
+version = "0.1.1"
 description = "A package to support supervised learning forecast methods (ML and DL) within a sliding forecast framework (sliding window or expanding window)"
 authors = ["Alberto Gutierrez"]
 license = "MIT"
