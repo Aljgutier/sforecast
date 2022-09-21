@@ -116,12 +116,12 @@ def nlag_arvars(df,ar_vars, N_lags):
     """ add autoregressive variables (nlag columns) to DataFrame
 
     Args:
-        df (DataFrame): dataframe
-        ar_vars (list): list of columns that will be added to the input dataframe
-        N_lags (_type_): add df([col]).shift(i) from i to Nlag for each col in ar_vars
+        df (DataFrame): dataframe containing covariates
+        ar_vars (list): list of columns (covariates) that will be added to the input dataframe
+        N_lags (int): add df([col]).shift(i) from i to Nlag for each col in ar_vars
 
     Returns:
-        _type_: _description_
+        DataFrame: DataFrame of XY variables with the addition of lagged variables.
     """
     
     # ar_vars := auto regressive varibles
@@ -141,7 +141,7 @@ def nlag_arvars(df,ar_vars, N_lags):
     return dfXY
 
 def min_func(x,minvalue):
-    """return x if greater than minvalue, otherwise return minvalue. Vectorized into max_vfunc for use by numpy.
+    """return x if greater than minvalue, otherwise return minvalue. Vectorized into min_vfunc for use by numpy.
 
     Args:
         x (numeric): number to compare to minvalue
@@ -155,7 +155,7 @@ def min_func(x,minvalue):
     return x
 
 def max_func(x,maxvalue):
-    """return x if less than maxvalue, otherwise return max value. Vectorized into min_vfunc for use by numpy array.
+    """return x if less than maxvalue, otherwise return max value. Vectorized into max_vfunc for use by numpy array.
 
     Args:
         x (numeric): number to compare to max value 
@@ -178,34 +178,32 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
     '''Receives as input DataFrame of X (exogenous + co-vvariates)  and Y (univariate or multivariate), and an untrained model.
 
     Args:
-        Nobserve (int): number of observations to include in the training data (counting back from the first prediction).
-    
-        Nlag (int): Add a lagged variable to the training from 1 to Nlag for each of the covariates. Lagged variables enable accounting for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
-    
+        Nobserve (int): number of observations to include in the training data (counting back from the first prediction).  
+        
         co_vars (list):  A list of co-variate variables. The y forecast variable(s) will be added to this co_vars list. Non-lagged co-variates (lag = 0) are removed from the X-train variables to avoid leakage. Lag values >0 and <= Nlag are included in X-train. Defaults to None.
     
-        Npred (int): number of predictions to make. Defaults to 1. 
+        Nlag (int): For each of the covariates, add a lagged variable to the training from 1 to Nlag . Lagged variables account for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
     
-        Nlag (int): sdff;dsjf. Defaults to 1.
+        Npred (int): number of predictions to make. Defaults to 1. 
         
         alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
     
-        Nhorizon (int):  n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1. Defaults to 1
+        Nhorizon (int):  N-step (i.e., Nhorizon) forecast. For example, the sliding (or expanding) window will move forward by Nhorizons after Nhorizon predictions. Default to 1.
     
-        i_start (int):  The first prediction where i corresponds the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Npred + 1. Defaults to None.
+        i_start (int):  The first prediction, where i corresponds the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Npred + 1. Defaults to None.
     
-        idx_start (int): The first observation specified as the dataframe index. idx_start takes presidence over i_start. Defaults to None.
+        idx_start (int): The first prediction specified by the DataFrame index. idx_start takes presidence over i_start. Defaults to None.
     
-        alpha (float): dfldsfdfj. Defaults to 0.2.
-    
-        ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows. 
-            * method from the mumpy.percentile function, one of
+        ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows.   
+        
+            * method from the mumpy.percentile function, one of  
+            
                 * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
                 * "minmax" - the min and max values observed errors
                 * "tdistribution" - compute the t-distribution confidence interval
                 
 
-        mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = a list of columns then the corresponding columns are scaled with the MinMax scaler.
+        mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = list of columns then the corresponding columns are scaled with the MinMax scaler.
                 
         ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
             
@@ -369,7 +367,7 @@ def sliding_forecast(dfXY, y, model, co_vars=None, minmax=(None,None),
         _df_pred[ypred_lower] = _df_pred[ypred_col] + _df_pred["error_lower"]
         _df_pred[ypred_upper] = _df_pred[ypred_col] + _df_pred["error_upper"]
 
-        # Apply minmax to CIs
+        # Apply minmax to CI
         _df_pred[ypred_lower] = _df_pred[ypred_lower].apply(lambda x: min_func(x,_minmax[0][0])) if _minmax[0][0]!=None else  _df_pred[ypred_lower]
         _df_pred[ypred_upper] = _df_pred[ypred_upper].apply(lambda x: max_func(x,_minmax[0][1])) if _minmax[0][1]!=None else  _df_pred[ypred_upper]
        
@@ -391,23 +389,22 @@ class sforecast:
     """Siding/expanding window forecast model.
     
     **__init__(self,  y="y", model=None, ts_parameters=None)**
-     Recieves inputs defining the sliding forecast model including ML model, and time-series sliding/expanding window hyper-parameters.
+     Recieves inputs defining the sliding forecast model including ML model, time-series sliding/expanding window hyper-parameters, and ML feature scaling.
         
         Args:
             y (str or list): Forecast (dependent) variable(s). Defaults to "y".
-            model (ML model): SKLearn model. Defaults to None, which will default to default parameters and and expanding window.
+            
+            model (ML Model): SK Learn ML mode, lDefaults to None. 
             
             ts_parameters (dictionary): Dictionary of sliding/expanding window forecast model hyperparameters. Defaults to "None".
             
-                Nobserve (int): number of observations to include in the training data (counting back from the first prediction). Defaults to None, expandng window.
+                Nobserve (int): number of observations to include in the training data (counting back from the first prediction). Defaults to None (unspecified), expandng window.
             
-                Nlag (int): Add a lagged variable to the training from 1 to Nlag for each of the covariates. Lagged variables enable accounting for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
+                Nlag (int): Add a lagged variable to the training from 1 to Nlag . Lagged variables enable accounting for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
             
-                co_vars (list):  A list of co-variate variables. The y forecast variable(s) will be added to this co_vars list. Non-lagged co-variates (lag = 0) are removed from the X-train variables to avoid leakage. Lag values >0 and <= Nlag are included in X-train. Defaults to None.
+                co_vars (list):  A list of co-variates. The y forecast variable(s) will be added to the co_vars list. Non-lagged co-variates (lag = 0) are removed from the X-train variables to avoid leakage. Lag values >0 and <= Nlag are included in X-train. Defaults to None.
             
                 Npred (int): number of predictions to make. Defaults to 1. 
-            
-                Nlag (int): sdff;dsjf. Defaults to 1.
                 
                 alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
             
@@ -417,34 +414,36 @@ class sforecast:
             
                 idx_start (int): The first prediction specified as the dataframe index. idx_start takes presidence over i_start. Defaults to None.
             
-                alpha (float): dfldsfdfj. Defaults to 0.2.
-            
                 ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows. 
-                    * method from the mumpy.percentile function, one of
-                        * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
-                    * "minmax" - the min and max values observed errors
-                    * "tdistribution" - compute the t-distribution confidence interval
-            
-            xscale (dictionary): input variables are scaled according as designated by the parameters in the xscale dictionary.
-            
-                mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = a list of columns then the corresponding columns are scaled with the MinMax scaler.
                 
-                ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
+                    * method from the mumpy percentile function, one of 
+                    
+                        * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"  
+                        
+                    * "minmax" - the min and max values observed errors  
+                    
+                    * "tdistribution" - compute the t-distribution confidence interval  
             
-            minmax (2-tuple): forecassts predictions and ci (confidence intervals) are constrained to fall between minmax[0] and minmax[1], given the corresponding min or max is != None, correspondingly. Defaults to (None, None).
+            xscale (dictionary): input variables are scaled as designated by the parameters in the dictionary.
+            
+                mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = list of columns, then the corresponding columns are scaled with the MinMax scaler.
+                
+                ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = list of columns, then the corresponding columns are scaled with StandardScaler.
+            
+            minmax (2-tuple): forecassts predictions and ci (confidence intervals) are constrained to fall between minmax[0] and minmax[1], given the corresponding min or max is != None. Defaults to (None, None).
         
     
     **State Variables**
     
-        metrics (dictionary): dictionary of MSE and MAE for each y
+        metrics (dictionary of dictionaries):  {y (key): {MSE: number} , {MAE: number} , ... }
         
-        model (ML Model):  ML Model. After forecasting (i.e., fitting) corresponds to the final state of the model after at the last window position.
+        model (ML Model):  ML Model. After forecasting (i.e., fitting) corresponds to the final state of the model at the last window position.
         
         ts_params (dictionary): dictionary of sliding/expanding window model hyper-parameters. See __init()__ documentation or further information.
         
         y (list): list of forecast variables
         
-        dfXYfc  (DataFrame): the initial DataFrame with all initial rows, X, and Y variables plus the addition of lagged variabiles minus initial rows with NaNs due to creating lagged variables (i.e., shifting).
+        dfXYfc  (DataFrame): the initial DataFrame with all initial rows, X, Y variables, and the addition of lagged variabiles minus initial rows with NaNs due to creating lagged variables (i.e., shifting).
         
         df_pred (DataFrame): Dataframe containing the prediciton results. See sforecast.forecast() for additional information.
 
