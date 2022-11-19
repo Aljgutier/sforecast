@@ -117,6 +117,9 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
+# VSCODE
+.vscode/
+
 # mkdocs documentation
 /site
 
@@ -146,3 +149,9 @@ dmypy.json
 data/superstore_subcatsales_cdp.csv
 data/superstore_prodsales_cdp.csv
 data/superstore_catsales_cdp.csv
+data/sell_prices.csv
+data/sales_train_evaluation.csv
+data/calendar.csv
+data/OECD_CCI_DOWNLOAD_DP_LIVE_2507_20220725.csv
+data/m5_sales_7_items_events_cci_wide.csv
+data/sales_20_items_events_cci.csv
