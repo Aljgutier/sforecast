@@ -5,6 +5,6 @@ __version__ = version("sforecast")
 from .sforecast import sforecast
 from .sforecast import ci_tdistribution
 from .sforecast import ci_percentile
-from .sforecast import nlag_arvars
+from .sforecast import nlag_covars
 from .sforecast import min_func
 from .sforecast import max_func

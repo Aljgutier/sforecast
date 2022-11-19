@@ -36,12 +36,16 @@ Add dependent packages with poetry
 > poetry add seaborn
 > poetry add pandas
 > poetry add sklearn
+> poetry add tensorflow
+> poetry add statsmodels
+> poetry add pmdarima
+
 
 * we recommend specifying version constraints without an upper cap by manually changing poetry’s default caret operator (^) to a greater-than-or-equal-to sign (>=)  
 pyproject.toml  
    ```
   [tool.poetry.dependencies]
-  python = ">=3.9"
+  python = ">=3.8"
   matplotlib = ">=3.4.3"
   ```
 
