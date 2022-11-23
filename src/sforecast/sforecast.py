@@ -11,12 +11,6 @@ import pandas as pd
 
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.statespace.sarimax import SARIMAX
-
-#from statsmodels.tsa.vector_ar.var_model import VAR
-#from statsmodels.tsa.statespace.varmax import VARMAX
-#from statsmodels.tsa.holtwinters import SimpleExpSmoothing
-#from statsmodels.tsa.holtwinters import ExponentialSmoothing
-
 import pmdarima as pm
 
 
@@ -843,7 +837,7 @@ class sforecast:
 
         assert model_type != "None" , f'model_type = {model_type} is not defined, model_type must be defined'
 
-        assert model_type == "cm" or model_type == "sk" or model_type == "sk" , f'model_type = "{model_type}" not supported'
+        assert model_type == "cm" or model_type == "sk" or model_type == "tf" , f'model_type = "{model_type}" not supported'
 
         assert self.y != None, f'y forecast variable(s) not specified'
         
