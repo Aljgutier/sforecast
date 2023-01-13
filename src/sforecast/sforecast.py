@@ -202,6 +202,15 @@ def nlag_covars(df:object,covars:list, N_lags:int) -> object:
 
 # covarlags tranformer
 class covarlags(BaseEstimator,TransformerMixin):
+    """ Transfomer for creating lagged variables. The transformer includes a Fit and Transform operation. 
+    
+    __init__ - receives two inputs "covars" and "Nlags", the number of lagged steps per covariate.
+    
+    Fit - saves a dataframe (dfmemory) of length (rows) Nlags for future use. 
+    
+    Transform - transforms the input data frame returning a data frame with the lagged covariates. The Transform is applied to the entire input data frame or if a new row is supplied, it is appended to the existing dataframe in memmory and transform is applied on the new saved dataframe. The olest row s dropped.
+
+    """
     def __init__(self, covars=None, Nlags=1):
         self.covars=covars
         self.Nlags = Nlags
@@ -249,6 +258,14 @@ class covarlags(BaseEstimator,TransformerMixin):
     
 # minmaxstd scaler        
 class minmaxstd_scaler(BaseEstimator,TransformerMixin):
+    """The minmaxstd scaler is a transformer that scales ML features according to the SKLEARN minmax scaler (default) and/or the SKlearn standard Scaler.
+    
+    **__init()__** - accepts arguements for designating. 
+
+    Args:
+        BaseEstimator (_type_): _description_
+        TransformerMixin (_type_): _description_
+    """
     def __init__(self, mms_cols=None, ss_cols=None, donotscale_cols=None):
         self.mms_cols = mms_cols
         self.ss_cols = ss_cols
