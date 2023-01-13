@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "sforecast"
-version = "0.2.3"
-description = "A framework for running forecasting models within a sliding/expanding window, including support of classical forecasting models, SK Learn supervised learning ML models, and TensorFlow deep learning models."
+version = "0.3.0"
+description = "A framework for running forecasting models within a sliding/expanding window out-of-sample forecast fit (train/test) and prediction (forecasts). The package includes support of classical forecasting models, SK Learn supervised learning ML models, and TensorFlow deep learning models."
 authors = ["Alberto Gutierrez"]
 license = "MIT"
 readme = "README.md"

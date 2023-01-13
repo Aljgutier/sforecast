@@ -4,8 +4,10 @@ from sklearn.metrics import mean_absolute_error as MAE
 from scipy.stats import t
 from sklearn.base import clone
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
 import pandas as pd
+import copy
 
 #from keras.models import Model, clone_model
 
@@ -54,10 +56,9 @@ def ci_tdistribution(errors, alpha):
     error_lower = e_mean - SE
     error_upper = e_mean + SE
 
-    
     return error_lower, error_upper
 
-def forecast_confidence(df,alpha,Nhorizon = 1, error="error", method="linear", verbose=False):
+def forecast_confidence(df,alpha, Nhorizon = 1, error="error", method="linear", verbose=False, debug=False):
     """Manage the computation of the confidence interval based on the selected method, from the folowwong choices,
     * numpy percentile 
     * t-statistics
@@ -87,6 +88,15 @@ def forecast_confidence(df,alpha,Nhorizon = 1, error="error", method="linear", v
     df_error["horizon"] = 1
     df_error["horizon"]=df_error.groupby("horizon_id")["horizon"].cumsum() # horizon = 1 , 2, 3 , 1, 2, 3, 1 , 2, 3, ...
     
+    if verbose or debug == True:
+        print(f'forecast_confidence: Nhorizon = {Nhorizon}')
+        print(f'forecast_confidence: method = {method}')
+        
+    if debug == True:
+        print(f'forecast_confidence: df (prior to joining error_lower and error_upper')
+        display(df)
+    
+    nh_errors_lowerupper =[]
     for nh in np.arange(1,Nhorizon + 1):
  
         errors_nh = df_error[df_error["horizon"]==nh][error].values
@@ -105,48 +115,26 @@ def forecast_confidence(df,alpha,Nhorizon = 1, error="error", method="linear", v
         elif method in percentile_methods:
              error_lower,error_upper =  ci_percentile(errors_nh, alpha, method=method)
         else:
-            print(f'confidence method = {method}')
-      
+            pass
+                    
+        nh_errors_lowerupper = nh_errors_lowerupper + [(error_lower,error_upper)]
         df_error.loc[nh_idx,"error_lower"] = error_lower
         df_error.loc[nh_idx,"error_upper"] = error_upper
 
-        if verbose == True: 
-            print(f'\nhorizon = {nh}')  
-            print(f'nh_idx = {nh_idx}')
-            print(f'confidicence interval, error_lower ={error_lower}')     
-            print(f'confidicence interval, error_upper ={error_upper}')    
+        if debug == True: 
+            print(f'forecast_confidence: horizon nh = {nh}')  
+            print(f'forecast_confidence: nh_idx = {nh_idx}, errors = {errors_nh}')
+            print(f'forecast_confidence: interval, error_lower ={error_lower}')     
+            print(f'forecast_confidence: error_upper ={error_upper}')    
             
     df = df.join(df_error[["error_lower","error_upper"]])
-        
-    return df
-
-def nlag_covars(df:object,co_vars:list, N_lags:int) -> object:
-    """ add covariat lags (nlag columns) to DataFrame
-
-    Args:
-        df (object): DataFrame containing covariates
-        co_vars (list): list of columns (covariates) that will be added to the input dataframe
-        N_lags (int): add df([col]).shift(i) from i to Nlags for each col in co_vars
-
-    Returns:
-        DataFrame: DataFrame of XY variables with the addition of lagged variables.
-    """
     
-    # co_vars := auto regressive varibles
+    if debug == True:
+        print(f'forecast_confidence: df (after joining error_lower and error_upper')
+        display(df)
+        print(f'forecast_confidence: nh_errors_lowerupper = {nh_errors_lowerupper}')
     
-    dfXY = df.copy()
-    
-    # ensure that co_vars is iterable
-    co_vars = [co_vars] if isinstance(co_vars,str) else co_vars
-
-    for n in np.arange(1,N_lags+1):
-        arv_shift_vars = []
-        for arv in co_vars:
-            arv_shift_var = arv+"_m"+str(n)
-            arv_shift_vars.append(arv_shift_var)
-        dfXY[arv_shift_vars] = dfXY[co_vars].shift(n)
-        
-    return dfXY
+    return df, nh_errors_lowerupper
 
 def min_func(x,minvalue):
     """return x if greater than minvalue, otherwise return minvalue. Vectorized into min_vfunc for use by numpy.
@@ -176,35 +164,165 @@ def max_func(x,maxvalue):
         x = x if x < maxvalue else maxvalue
     return x
 
+# Numpy vectorized functions
 min_vfunc = np.vectorize(min_func)
 max_vfunc = np.vectorize(max_func)
 
-def predict_horizons(dfXYfc:object, y:list,  model:object,  covars:list,  i_initial_pred:int, 
-            model_type="sk", catvars=None, exogvars=None, Nlags=None,
-            Npred=1, Nhorizon=1, cm_params=None, tf_params=None, 
-            Nobserve=None, verbose=False ) -> list:
-    """Train and predict over horizons. The number of predictions = Npred. First prediction (forecast) corresponds to i-th (i_initial_pred) row of the input DataFrame.
+# Transformers
+#    BaseEstimater ... get_params(), set_params() methods
+#    TransformerMixin ... fit_transform() method
+
+def nlag_covars(df:object,covars:list, N_lags:int) -> object:
+    """ add covariat lags (nlag columns) to DataFrame
 
     Args:
-        dfXYfc (DataFrame): DataFrame with forecast variables.
+        df (object): DataFrame containing covariates
+        covars (list): list of columns (covariates) that will be added to the input dataframe
+        N_lags (int): add df([col]).shift(i) from i to Nlags for each col in co_vars
+
+    Returns:
+        DataFrame: DataFrame of XY variables with the addition of lagged variables.
+    """
+    
+    # co_vars := auto regressive varibles
+    
+    dfXY = df.copy()
+    
+    # ensure that co_vars is iterable
+    covars = [covars] if isinstance(covars,str) else covars
+
+    for n in np.arange(1,N_lags+1):
+        cv_shift_vars = []
+        for cv in covars:
+            cv_shift_var = cv+"_m"+str(n)
+            cv_shift_vars.append(cv_shift_var)
+        dfXY[cv_shift_vars] = dfXY[covars].shift(n)
+        
+    return dfXY
+
+# covarlags tranformer
+class covarlags(BaseEstimator,TransformerMixin):
+    def __init__(self, covars=None, Nlags=1):
+        self.covars=covars
+        self.Nlags = Nlags
+        self.Nmemory = Nlags+1
+        self.dfmemory = None
+        assert self.Nlags >=0 ,f'Nlags = {self.Nlags} not allowed. Nlags must be >= 0'
+        
+    def fit(self,df):
+        self.dfmemory = df.tail(self.Nmemory) if df.index.size > self.Nmemory else df.index.size
+        return self
+    
+    def transform(self, df=None, Nout=None, dfnewrows=None, debug=False):
+        # if df not spefified then transform dfmemory
+        # add new row(s) and update dfmemory
+        
+        if not isinstance(df,pd.DataFrame):
+            df = self.dfmemory
+            #print("covarlags.transform: dfmemory before new rows =")
+            #display(df.tail())
+            if isinstance(dfnewrows,pd.DataFrame):
+                df = pd.concat([df,dfnewrows])
+                self.dfmemory = df.tail(self.Nmemory)    
+            
+            if debug == True:    
+                print("  covarlags.transform: new row dfmemory.tail()")
+                display(df.tail(3))
+        
+        dfout = df.copy()
+        dfout = nlag_covars(dfout,self.covars, self.Nlags)
+        #  do not delete first Nlag rows it will be done above to avoid cumulative  deleting due to derived variables ... dfout = dfout.iloc[self.Nlags:] 
+        
+        return dfout if Nout==None else dfout.tail(Nout)
+    
+    def get_last_dfrow(self): # last row from dfmemory ... corresponds to the most recent past
+        return self.dfmemory.tail(1)
+    
+    def set_last_y(self,y,yvalue, debug=False):
+        #last_idx = self.dfmemory.index[ self.dfmemory.index.size - 1 ] # this method can cause subtle mis matches in index types 
+        last_i =  self.dfmemory.index.size - 1 
+        self.dfmemory[y].iloc[last_i] = yvalue
+        if debug == True:
+            print("  covarlags.set_last_y, dfmemory.tail()")
+            display(self.dfmemory.tail())
+        return None
+    
+# minmaxstd scaler        
+class minmaxstd_scaler(BaseEstimator,TransformerMixin):
+    def __init__(self, mms_cols=None, ss_cols=None, donotscale_cols=None):
+        self.mms_cols = mms_cols
+        self.ss_cols = ss_cols
+        self.donotscale_cols = donotscale_cols
+        self.mmscaler = None
+        self.sscaler = None
+
+    def fit(self, df):
+        # mms scaler fit
+        if self.mms_cols != None:
+            scaler = MinMaxScaler()         
+            if (self.mms_cols == "all") & (self.ss_cols != "all"): 
+                self.mmscaler = scaler.fit(df) 
+            elif self.mms_cols != "all":
+                self.mmscaler = scaler.fit(df[self.mms_cols])
+        # standard scaler fit        
+        if self.ss_cols != None:
+            scaler = StandardScaler()
+            if self.ss_cols == "all":
+                self.sscaler = scaler.fit(df)  # used pre-fitted scaler when predicting
+            else:
+                self.sscaler = scaler.fit(df[self.ss_cols])   
+                   
+        return self 
+    
+    def transform(self, df):
+        df_scaled = df
+        if self.mms_cols != None:
+            if (self.mms_cols == "all") & (self.ss_cols != "all"): 
+                df_scaled = self.mmscaler.transform(df)
+                df_scaled = pd.DataFrame(df_scaled, columns = df.columns, index = df.index)
+            elif self.mms_cols != "all":
+                df_scaled[self.mms_cols] = self.mmscaler.transform(df_scaled[self.mms_cols])
+
+        if self.ss_cols != None:
+            if self.ss_cols == "all":
+                df_scaled = self.sscaler.transform(df) # returns Numpy array
+                df_scaled = pd.DataFrame(df_scaled, columns = df.columns, index = df.index)
+            else:
+                df_scaled[self.ss_cols] = self.sscaler.transform(df_scaled[self.ss_cols]) # Numpy nd-array into cols           
+        
+        if self.donotscale_cols != None:
+            df_scaled[self.donotscale_cols] = df[self.donotscale_cols]
+        
+        return df_scaled
+    
+
+def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_params=None,  scale_params = None,
+                    swin_params=None,  tf_params=None, fit = True, predict=False, pred_params = None, verbose=False , debug=False) -> list:
+    """Train and predict over horizons. The number of predictions = Ntest. First prediction (forecast) corresponds to i-th (i_initial_pred) row of the input DataFrame.
+
+    Args:
+        dfXY(DataFrame): DataFrame with forecast variables.
         y (string, list): target variable string, or list of variables.
         model (object): reference/pointer to the forecast model
         covars (list): list of covariates
         i_initial_pred (int): i-th (integer) index of input DataFrame, corresponding to the first prediction. 
         model_type (str, optional): type of forecast model "cm" (classical), "sk" (SK Learn), or "tf" (TensorFlow). Defaults to "sk".
         catvars (list, optional): list of categorical variables. Defaults to None.
-        exogvars (list, optional): list of exogenous variables. Defaults to None.
-        Npred (int, optional): N predictions. Defaults to 1.
-        Nhorizon (int, optional): Predict for Nhorizon before retraining or tuning (TensorFlow) the model. Defaults to 1.
+        exenvars (list, optional): list of exogenous variables. Defaults to None.
+        Ntest (int, optional): N predictions. Defaults to 1.
+        Nstep (int, optional): Predict for Nhorizon before retraining or tuning (TensorFlow) the model. Defaults to 1.
         Nlags (int, optional): Number co-variate lags. Defaults to 1
         cm_params (Dictionary, optional): Classical model parameters. Defaults to None.
+        scaler (adfafdj): ddasf
         
         tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
             * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
             * Nepochs_t: Numbre of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
             * batch_size: Defaults to 32
             * lstm: defaults to False
-        Nobserve (int, optional): If Nobserve == None, then the first observation for training purposes is the first row of the input DataFrame. If Nobserve is an integer then Nobserve observations before the first prediction are selected. Defaults to None.
+        
+        fit (Booelan): Default = True. Fit a model with sliding forecast (past training and future test) observations. When fit = False, then predict using the previously trained model. Variables will be scaled with the fitted scalers (MinMax or Standard).
+
         verbose (bool, optional): Defaults to False.
         
 
@@ -217,237 +335,994 @@ def predict_horizons(dfXYfc:object, y:list,  model:object,  covars:list,  i_init
             * history_i: TensorFlow training history (initial training)
             * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
     """
-      
-    X_cols = list(dfXYfc.columns) # remove y and covars next
-    for cv in covars: X_cols.remove(cv)  # remove covariates from X ... if univariate then covars=_y
+    
+    if fit ==True:
+        assert predict == False, f'predict must be False if fit == True'
+        
+    assert (fit == True or predict == True), f'Either fit or predict must be True'
+    
+    # ensure y is a list
+    y = [y] if isinstance(y,str) else y
+    
+    # unpack swin_params
+    catvars=swin_params["catvars"]
+    exenvars=swin_params["exenvars"]
+    exogvars=swin_params["exogvars"]
+    covars = swin_params["covars"]
     Ncovars = len(covars)
-
-    dfX = dfXYfc[X_cols]
-    dfy = dfXYfc[y]
-    dfXcats = dfX[catvars] if catvars != None else None 
-    dfXlags = dfX.drop(catvars, axis=1) if catvars != None else dfX  # remove catvars from Xlags
-    dfXlagsexogs = dfXlags
-    dfXexogs = dfXlags[exogvars] if exogvars != None else None
-    dfXlags = dfXlags.drop(exogvars, axis=1) if exogvars != None else dfXlags
+    mms_cols = scale_params["mms_cols"]
+    ss_cols = scale_params["ss_cols"]
+    Nhorizon = swin_params["Nhorizon"]
+    Nlags=swin_params["Nlags"]
+    Ntest = swin_params["Ntest"]
+    Ntest = swin_params["Ntest"]
+    idx_start = swin_params["idx_start"]
+    horizon_predict_method = swin_params["horizon_predict_method"]
+    derived_attributes_transform = swin_params["derived_attributes_transform"]
+    Ndclip = derived_attributes_transform().get_Nclip() if derived_attributes_transform != None else 0
     
-    history_i = None # tensorflow initial history, first fit
-    history_t = None # tensorflow tuning second, third, ... fit
-    model_fit = None
+    # flat exenvars
+    if  exenvars!=None:
+        exenvars_flat = [ex for exen in exenvars for ex in exen] if not isinstance(exenvars[0],str)  else exenvars
+                     
+    # unpack predict variables
+    if predict == True:
+        index_pred = pred_params["index"]
+        dfXexogs = pred_params["dfexogs"]
+        Nperiods = pred_params["Nperiods"]
+        make_lags = pred_params["make_lags"]
+        make_derived_attributes = pred_params["make_derived_attributes"]
+        scaler = pred_params["scaler"]
+        
+        #print("test_train_predict: predict, index_pred =", index_pred)
+        #print("test_train_predict: predict, make_lags =", make_lags)
     
-    y_pred_idx = []
+    if verbose == True or debug == True:
+        print("test_train_predict: fit, Nhorizon =",Nhorizon)
+        print("test_train_predict: covars =", covars)
+        print("test_train_predict: exenvars =", exenvars)
+        print("test_train_predict: catvars =", catvars)
+
+    # initialize Tensorflow variables ... needed for return
+    history_i = None # tensorflow initial training history, first fit
+    history_t = None # tensorflow tuning/training history second, third, ... fit
+    model_fit = None # for arima and sarima models (not autoarima)
     
-    # fit and predict horizon ... multiple horizons if Npred > Nhorizon
-    # Nhorizon = 1 (nsteps) for classic models arima and saramax
-    # Nhorizon can be greater than 1 (nstep prediction) for tf, sk, and auto_arima models
-    for i in np.arange(i_initial_pred,i_initial_pred+Npred,Nhorizon):  
-        
-        # first observation
-        i1_obs = 0 if Nobserve == None else i - Nobserve   # if Nobserve = None, then expanding window
-        if verbose == True:
-            print(f'training observations ilocs = {i1_obs}:{i-1}')
-        
-        Y_train = dfy.iloc[i1_obs:i].values # last train index =  i-1
-        
-        ###### initialize model and fit   
-        if model_type == "cm" and cm_params["model"] == "arima":
-            Y_train = dfy.iloc[i1_obs:i].values
-            m = ARIMA(Y_train, order=cm_params["order"])
-            pred_start = Y_train.shape[0]
-            pred_end = pred_start
-            model_fit = m.fit()
-            
-        if model_type == "cm"  and cm_params["model"] == "sarimax":
-            Y_train = dfy.iloc[i1_obs:i].values
-            if exogvars == None:
-                m = SARIMAX(Y_train, order= cm_params["order"] , seasonal_order = cm_params["seasonal_order"],
-                            enforce_stationarity = cm_params["enforce_stationarity"],
-                            enforce_invertibility = cm_params["enforce_invertibility"] )
-            else:
-                Xexog_train = dfXexogs[i1_obs:i].values
-                m = SARIMAX(Y_train, exog = Xexog_train, order= cm_params["order"] , seasonal_order = cm_params["seasonal_order"],
-                            enforce_stationarity = cm_params["enforce_stationarity"],
-                            enforce_invertibility = cm_params["enforce_invertibility"] )
-            model_fit = m.fit(disp=False)
-        
-        if model_type == "cm" and cm_params["model"]== "auto_arima":
-            # auto_arima initialize and fit model in one step
-            if exogvars == None:
-                m = pm.auto_arima(Y_train, 
-                    start_q = cm_params["start_q"],
-                    start_p = cm_params["start_p"],
-                    d = cm_params["d"],
-                    test = cm_params["test"], # stationariy test, e.g., ADF (augmented Dickey-Fuller) for stationarity
-                    max_p = cm_params["max_p"],
-                    max_q = cm_params["max_q"],
-                    seasonal=True, #set to seasonal 
-                    start_P=cm_params["start_P"],
-                    start_Q=cm_params["start_Q"],
-                    max_Q=cm_params["max_Q"],
-                    m=cm_params["m"], # freqeuncy of the cycle (i.e., 12 periods ...12 months)
-                    D=cm_params["D"], #order of the seasonal differencing ... will be estimated when seasonality = True
-                    trace=cm_params["trace"],   # print model AIC 
-                    error_action=cm_params["error_action"],  # don't want to know if an order does not work
-                    suppress_warnings=cm_params["suppress_warnings"], # don't want convergence warnings
-                    stepwise=cm_params["stepwise"]# stepwise search
-                    )
-                m.fit(Y_train)  # fit model in place ... a little different than arima and sarimax
-                
-                
-            else:     
-                Xexog_train = dfXexogs[i1_obs:i].values
-                m = pm.auto_arima(Y_train, exogenous = Xexog_train , 
-                                start_q = cm_params["start_q"],
-                                start_p = cm_params["start_p"],
-                                d = cm_params["d"],
-                                test = cm_params["test"], # stationariy test, e.g., ADF (augmented Dickey-Fuller) for stationarity
-                                max_p = cm_params["max_p"],
-                                max_q = cm_params["max_q"],
-                                seasonal=True, #set to seasonal 
-                                start_P=cm_params["start_P"],
-                                start_Q=cm_params["start_Q"],
-                                max_Q=cm_params["max_Q"],
-                                m=cm_params["m"], # freqeuncy of the cycle (i.e., 12 periods ...12 months)
-                                D=cm_params["D"], #order of the seasonal differencing ... will be estimated when seasonality = True
-                                trace=cm_params["trace"],   # print model AIC 
-                                error_action=cm_params["error_action"],  # don't want to know if an order does not work
-                                suppress_warnings=cm_params["suppress_warnings"], # don't want convergence warnings
-                                stepwise=cm_params["stepwise"]# stepwise search
-                                )
-                m.fit(Y_train,exogenous = Xexog_train) # fit model in place ... similar to sklearn ... different than arima and sarimax
-             
-        if model_type == "sk":
-            m = clone(model)  # clone SKLearn untrained model
-            X_train = dfX.iloc[i1_obs:i].values  # last train index is i-1   
-            m.fit(X_train,Y_train)
-            
-        if model_type == "tf":
-            Xlags_train = dfXlags[i1_obs:i].values
-            # X cats is a list of dataframes ... embeddins will be a list of inputs
-            Xcats_train_list =  [dfXcats[c][i1_obs:i].values for c in catvars] if catvars != None else None
-            Xlagsexogs_train = dfXlagsexogs[i1_obs:i].values if exogvars != None else None
-            Xexogs_train =  dfXexogs[i1_obs:i].values if exogvars != None else None
-            Xlags_train = dfXlags[i1_obs:i].values
+    #### Loop Variables ... e.g., i_first, i_ilast ...
+    
+    if fit == True: # loop variables for fit == True
+    
+        ### dfXY  only keep up to the last fit ... toss the rest
+        i_lastrow =  (dfXY.index.size - 1)  # default lastrow  of dataframe
+        i_lastrow =  (dfXY.loc[:idx_start].index.size - 1) if idx_start != None else i_lastrow #      
+        dfXY = dfXY[:i_lastrow + 1] # only keep up to last pred row, +1 to include i_last otherwise it will be left out since numbering starts at 0 ... this is necessary if start wiith idx_start, or i_sstart
 
-            if  tf_params["lstm"]==False:
-                if exogvars != None and catvars != None:
-                    X_train = [Xlagsexogs_train] + Xcats_train_list
-                if exogvars == None and catvars != None:
-                    X_train = [Xlags_train] + Xcats_train_list
-                else:
-                    X_train = Xlags_train
-            elif tf_params["lstm"] == True:
-                if catvars!= None and exogvars!= None:
-                    X_train = [Xlags_train.reshape(Xlags_train.shape[0], Nlags, Ncovars)] + [Xexogs_train] + Xcats_train_list
-                elif catvars==None and exogvars!=None:
-                    X_train = [Xlags_train.reshape(Xlags_train.shape[0], Nlags, Ncovars)] + [Xexogs_train]
-                elif catvars!=None and exogvars==None:
-                    X_train = [Xlags_train.reshape(Xlags_train.shape[0], Nlags, Ncovars)] + Xcats_train_list
-                else:
-                    X_train = Xlags_train
-             
-            if i == i_initial_pred:
-                m=model # set a pointer to the model ... note that cloning will require compiling and implementng redundent TF logic ... dont do that here
-                if verbose == True: print("Nepochs_i =",tf_params["Nepochs_i"])
-                history_i=m.fit(X_train,Y_train,epochs=tf_params["Nepochs_i"], batch_size = tf_params["batch_size"], verbose=0)
-            else:
-                # this will tune the previously trained model ... Nepochs_t < Nepochs_i
-                if verbose == True:  print("Nepochs_t =",tf_params["Nepochs_t"])
-                history_t=m.fit(X_train,Y_train,epochs=tf_params["Nepochs_t"], batch_size =tf_params["batch_size"], verbose=0)      
+        ### ith loop beginning and end 
         
-        #### X_test and Xexogs_test   
-        if model_type == "sk":
-            X_test = dfX.iloc[i:i + Nhorizon].values 
-         
-        elif model_type == "tf":
-            Xlags_test = dfXlags.iloc[i:i+Nhorizon].values
-            Xcats_test_list =  [dfXcats[c].iloc[i:i+Nhorizon].values for c in catvars] if catvars != None else None
-            Xlagsexogs_test = dfXlagsexogs.iloc[i:i+Nhorizon].values if exogvars != None else None
-            Xexogs_test =  dfXexogs[i:i+Nhorizon].values if exogvars != None else None
-            Xlags_test = dfXlags[i:i+Nhorizon].values
+        cm_model = cm_params["model"] if model_type == "cm" else None # unpack cm_model for convenience
 
-            if tf_params["lstm"]==False:
-                if exogvars != None and catvars != None:
-                    X_test = [Xlagsexogs_test] + Xcats_test_list
-                if exogvars == None and catvars != None:
-                    X_test = [Xlags_test] + Xcats_test_list
-                else:
-                    X_test = Xlags_test
-            elif tf_params["lstm"] == True:
-                if catvars!=None and exogvars!=None:
-                    X_test = [Xlags_test.reshape(Xlags_test.shape[0], Nlags, Ncovars)] + [Xexogs_test] + Xcats_test_list
-                elif catvars==None and exogvars!=None:
-                    X_test = [Xlags_test.reshape(Xlags_test.shape[0], Nlags, Ncovars)] + [Xexogs_test]
-                elif catvars!=None and exogvars==None:
-                    X_test = [Xlags_test.reshape(Xlags_test.shape[0], Nlags, Ncovars)] + Xcats_test_list
-                else:
-                    X_test = Xlags_test.reshape(Xlags_test.shape[0], Nlags, Ncovars)
-                    
-        elif model_type == "cm":
-            X_test = dfX.iloc[i:i + Nhorizon].values 
-            if exogvars != None:
-                 Xexogs_test = dfXexogs[i:i+Nhorizon].values
-                 
-        #### predict horizons   
-        
-        if model_type == "cm":
-            if  cm_params["model"] == "arima" or cm_params["model"] == "sarimax" :
-            
-                # predict by calling forecast from the fitted model
-                if exogvars == None:
-                    y_pred = model_fit.forecast()[0]
-                else:
-                    y_pred = model_fit(exog=Xexogs_test).forecast()[0]
-                    
-                y_pred = np.array([y_pred]).reshape(1,1)
-            
-            if cm_params["model"]== "auto_arima":
-            
-                # call forecast on the fitted model m
-                n_periods = X_test.shape[0]
-                print("n_periods = ",n_periods)
-                if exogvars == None:
-                    y_pred = m.predict(n_periods)
-                    
-                else:
-                    y_pred = m.predict(n_periods, exogenous = Xexogs_test)
-                 
-                # reshape for consistenty with y_test, eg ... error = y_test - y_pred 
-                y_pred = np.array([y_pred]).reshape(n_periods,1)    
-
-            
-        # sklearn and tensorflow
+        if model_type == "cm" and (cm_model == "arima" or (cm_model=="sarimax" and derived_attributes_transform == None) or (cm_model=="auto_arima" and derived_attributes_transform == None)) :
+            lags = False
+            derived = False
+            Nclip = 0
         else:
-            y_pred = m.predict(X_test) # prediction ... Nhorizon = rows of X_test
-            
-        y_test = dfy.iloc[i:i + Nhorizon].values
-        
-        # put pred and test in nd arrays
-        
-        
-        y_test_nda = np.append(y_test_nda,y_test,axis=0) if i != i_initial_pred else y_test
-        y_pred_nda = np.append(y_pred_nda,y_pred,axis=0) if i != i_initial_pred else y_pred
-            
-        # save indexes to put back into original data frame
-        # if Nhorizon not evenly divided into Npred then there will idx mismatch
-        #    _n_idx takes care of potential idx mismatch for such a case
-        _n_idx = y_test.shape[0]
-        _pred_idx = list(np.arange(i,i + _n_idx,1))
-        
-        y_pred_idx+=_pred_idx # append new prediction indexes
-        
-        return_tuple = None 
-        if model_type == "cm":
-            return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m ,model_fit
-        if model_type == "sk":
-            return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m 
-        elif model_type =="tf":
-            return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m , history_i, history_t
-            
-    return return_tuple  ### predict_horizons ###
+            lags = True
+            derived = True if derived_attributes_transform != None else False
+            Nclip = Nlags if Nlags > Ndclip else Ndclip  # discard NaN initial rows due to Nlag shifts and derived_attributes 
+             
+        N_loop_step = Nhorizon  
+        autoarima_nperiods = Nhorizon
+        i_initial_pred = i_lastrow - Ntest + 1 - Nclip if Ntest > 0 else i_lastrow - Nclip + 1
+        i_loop_first = i_initial_pred  #  
+        i_lastrow = dfXY.index.size - 1 - Nclip #  new i_lastrow account for NaN clip (Nclip)
+        i_loop_last = i_lastrow + 1 # # ... allows training on the last row  
+                                    # example: i_lastrow = 30 , i_loop_last = 31, last train on i = 30 
 
-def sliding_forecast(dfXY, y, model, model_type="sk", covars=None, catvars=None, exogvars= None, minmax=(None,None),
-                     Nlags=1, Nobserve=None, Npred = 1,  Nhorizon=1, i_start = None, tf_params=None, cm_params=None,
-                     idx_start=None, alpha = 0.2, ci_method="linear", mms_cols = None, ss_cols=None,  verbose = False):
+        #i_last_predict ... ith row of last prediction. Only autoarima without derived does multi-step prediction
+        if derived == False and  model_type == "cm" and cm_params["model"] == "auto_arima" : # all other cases besides arima non-derived manage need covarlags and cannot do N-step prediction
+            i_last_predict = i_lastrow  - ( Nhorizon - 1 )
+        else:
+            i_last_predict = i_lastrow # last prediction of the fit process (i.e., training and test)
+
+        i_last_fit = i_loop_last   # train on the last observation row ... prediction method will be based on last row fit ... afer fit phase, then predict forward
+        
+        if debug == True:
+
+            print("test_train_predict: lags =",lags)
+            print("test_train_predict: derived =",derived)
+            print("test_train_predict: Nclip =", Nclip)
+            print("test_train_predict: dfXY size, pre clip = ",dfXY.index.size)
+            print("test_train_predict: dfXY size, post clip = ",dfXY.index.size - Nclip)
+            print("test_train_predict: i_lastrow ", i_lastrow)  # Nclip already subtracted above
+            print("test_train_predict: i_last_predict ", i_last_predict)  # Nclip already subtracted above
+            print("test_train_predict: i_initial_predt =", i_initial_pred)
+            print("test_train_predict: i_last_fit =", i_last_fit)
+            print("test_train_predict: i_loop_first =", i_loop_first)
+            print("test_train_predict: i_loop_last =", i_loop_last)
+            print("test_train_predict: N_loop_step = ",N_loop_step)
+    
+        # initialize additional varialbels 
+        make_lags = None  # default ot none ... None for cm models, not none for sk and tf models
+        make_derived_attributes = None # default to noe ...None for cm models, not none for sk and tf models
+        scaler = None # # default to noe ...None for cm models, not none for sk and tf models
+        
+        y_pred_nda = None
+        y_test_nda = None
+        y_pred_idx = None
+        
+
+        # predict_cnt 
+        predict_cnt = 0
+
+    if predict == True: # loop parameter for predict == True
+        i_initial_pred = 0
+        Nclip = 0
+        i_loop_first = i_initial_pred # 
+        i_last_predict = i_loop_first + Nperiods - 1 # Nperiods, starting at i_loop_first
+        i_loop_last = i_last_predict                 # Nhorizon predictions/forecasts starting at i_loop_first
+        lags = True if make_lags != None else False
+        derived = True if make_derived_attributes != None else False
+        m = model
+        model_fit = m 
+        N_loop_step = Nhorizon if horizon_predict_method == "multi_step" else 1
+        autoarima_nperiods = Nperiods
+
+        if debug == True:
+            print("test_train_predict: predict, index_pred =",index_pred)
+            print("test_train_predice: predict, Nperiods =", Nperiods)
+            print("test_train_predict: i_loop_first =",i_loop_first)
+            print("test_train_predict: i_last_predict =",i_last_predict)
+            print("test_train_predictl: i_loop_last =",i_loop_last)
+            print("test_train_predict: N_loop_step = ",N_loop_step)
+            
+        # predict_cnt 
+        predict_cnt = 0
+    
+    ####### LOOP ... train/test/predict  #########
+    outer_loop_break = False
+    for i in np.arange(i_loop_first, i_loop_last + 1, N_loop_step):  # +1 so last i will be i_loop_last
+        
+        if outer_loop_break == True:
+            break
+        outer_loop_break = False
+        
+        if debug == True: 
+            print("\ntrain_test_predict: outer-loop, i_loop_last =", i_loop_last,",i =", i)
+                    
+        if fit == True:  
+            # dfXY observations ... prepare dfX, dfY, dfXtrain, dfXexogs, dfXlags ...
+            # dfXY_train before covarlags ... before clip
+            dfxy = dfXY
+            dfy = dfXY[y]
+            dfXY_train = dfXY.iloc[:i + Nclip] # add Nclip since adjusted for Nclip above
+            dfY_train = dfy.iloc[:i + Nclip] # add Nclip since adjusted for Nclip above
+
+            
+            #### Covarlags
+            if lags: #  need lags for cm if have derived_attributes
+                make_lags = covarlags(covars=covars,Nlags=Nlags)
+                if model_type == "tf":
+                    if catvars != None:
+                        dfXcats_train = dfXY_train[catvars] 
+                        _dfXY_train = dfXY_train.drop(catvars, axis =1 )
+                        dfXY_train=make_lags.fit_transform(_dfXY_train) #
+                    else:
+                        dfXY_train=make_lags.fit_transform(dfXY_train)
+                        
+                else:
+                    dfXY_train=make_lags.fit_transform(dfXY_train)
+
+            # dfX_train ... after make lags or dfXY and dfX will be inconssistent
+            dfX_train = dfXY_train.drop(covars,axis=1)
+
+            #### Derived Variables
+            # dfXexen
+            #   ouput of derived variables contains 
+            #     endogenous derived variables 
+            #     exogenous variables
+            #     covarlags
+            #     y variables needed for derived ... later drop the y variables ... will only keep past derived variables to prevent leakage
+            if derived:
+                make_derived_attributes = derived_attributes_transform()
+                dfX_train = make_derived_attributes.fit_transform(dfX_train) # dfXexen contains exogenous and endogenous (derived) variables
+                
+            if lags or derived:
+                #### delete NaN rows
+                dfy= dfy.iloc[Nclip:] # 
+                dfxy = dfxy.iloc[Nclip:]
+                dfXcats_train = dfXcats_train.iloc[Nclip:] if model_type == "tf" and catvars != None else None
+                dfXY_train = dfXY_train.iloc[Nclip:]
+                dfY_train = dfY_train.iloc[Nclip:]
+                dfX_train = dfX_train.iloc[Nclip:]
+                
+            else:
+                #### delete NaN rows
+                dfy= dfy # 
+                dfxy = dfxy
+                dfXcats_train = dfXcats_train if model_type == "tf" and catvars != None else None
+                dfXY_train = dfXY_train
+                dfY_train = dfY_train
+                dfX_train = dfX_train
+                
+                
+            # Scale
+            # do not scele cm models
+            # tf scaled below
+            # sk models scale of dfX_train
+            #  covar lags (not unlagged) and exogenous variables are scaled ..  
+            #  do not scale catvars
+            #  y (target variables) not scaled
+            if  model_type == "sk" or model_type == "tf":
+                scaler=minmaxstd_scaler(mms_cols=mms_cols,ss_cols=ss_cols)
+                dfX_train = scaler.fit_transform(dfX_train)
+            
+            if debug == True:
+                print("test_train_predict: dfX_train")
+                display(dfX_train.tail(3))
+                print(f'test_train_predict: dfX_train.shape = {dfX_train.shape}')
+            
+            # this Y_train only used by cm ... sk and tf create their own Y_tran based on covars
+            # Y_train values  ... single_step and multi_step
+            # if multi_step ...  Y_train list for each time-step within Nhorizon ...
+            Y_train = dfY_train[y[0]].values           # sinlge_step prediction simply needs Y_train ...  y is a list so take the first element 
+            if horizon_predict_method == "multi_step":  # multi_step has family of Y_train values for fit below
+                Y_train = [Y_train]
+                for n in np.arange(1,Nhorizon):
+                    Y_train = Y_train + [dfY_train[y[0]].shift(-n).values] # shift -n ... will contain n NaN s at the end ... clip off below 
+            if model_type == "cm" and  debug == True:
+                print("test_train_predict: dfY_train")
+                display(dfY_train.tail())
+                print('test_train_predict: dfY_train.shape = {dfY_train.shape} ')
+                
+            # dfXexen_train    
+            dfXexen_train = dfX_train[exenvars_flat] if exenvars != None else None
+
+
+            #######################
+            ###### fit models #####
+            if model_type == "cm" and cm_params["model"] == "arima": # fit arima
+
+                if debug == True: 
+                    print("train_test_predict: arima fit i =", i)
+                
+                m = ARIMA(Y_train, order=cm_params["order"])
+                model_fit = m.fit()
+                
+            if model_type == "cm"  and cm_params["model"] == "sarimax": # fit sarimax
+                if exenvars == None:
+                    if debug == True: 
+                        print("train_test_predict: sarimax fit i =", i)
+                     
+                    m = SARIMAX(Y_train, order= cm_params["order"] , seasonal_order = cm_params["seasonal_order"],
+                                enforce_stationarity = cm_params["enforce_stationarity"],
+                                enforce_invertibility = cm_params["enforce_invertibility"] )
+                else:
+
+                    if debug == True: 
+                        print("train_test_predict: sarimax fit, with exenvars, i =", i)
+                    
+                    Xexen_train = dfXexen_train.values if exenvars != None else None
+                    
+                    m = SARIMAX(Y_train, exog = Xexen_train, order= cm_params["order"] , seasonal_order = cm_params["seasonal_order"],
+                                enforce_stationarity = cm_params["enforce_stationarity"],
+                                enforce_invertibility = cm_params["enforce_invertibility"] )
+                
+                model_fit = m.fit(disp=False)
+            
+            if model_type == "cm" and cm_params["model"]== "auto_arima": # fit pdarima model
+                
+                if debug == True: 
+                    print("train_test_predict: autoarima fit, i =", i)
+                
+                # auto_arima initialize and fit model in one step
+                if exenvars == None: # pdarima w/o exenvars
+                    
+                    if debug == True:
+                        print("test_train_predict: auto_arima fit w/o exenvars")
+                    m = pm.auto_arima(Y_train, 
+                        start_q = cm_params["start_q"],
+                        start_p = cm_params["start_p"],
+                        d = cm_params["d"],
+                        test = cm_params["test"], # stationariy test, e.g., ADF (augmented Dickey-Fuller) for stationarity
+                        max_p = cm_params["max_p"],
+                        max_q = cm_params["max_q"],
+                        seasonal=True, #set to seasonal 
+                        start_P=cm_params["start_P"],
+                        start_Q=cm_params["start_Q"],
+                        max_Q=cm_params["max_Q"],
+                        m=cm_params["m"], # freqeuncy of the cycle (i.e., 12 periods ...12 months)
+                        D=cm_params["D"], #order of the seasonal differencing ... will be estimated when seasonality = True
+                        trace=cm_params["trace"],   # print model AIC 
+                        error_action=cm_params["error_action"],  # don't want to know if an order does not work
+                        suppress_warnings=cm_params["suppress_warnings"], # don't want convergence warnings
+                        stepwise=cm_params["stepwise"]# stepwise search
+                        )
+                    m.fit(Y_train)  # fit model in place ... a little different than arima and sarimax
+                          
+     
+                else:     # pdarima w/ exenvars
+                    if debug == True:
+                        print("test_train_predict: auto_arima fit w/ exenvars")
+                    Xexen_train = dfXexen_train.values
+                    m = pm.auto_arima(Y_train, exogenous = Xexen_train , 
+                                    start_q = cm_params["start_q"],
+                                    start_p = cm_params["start_p"],
+                                    d = cm_params["d"],
+                                    test = cm_params["test"], # stationariy test, e.g., ADF (augmented Dickey-Fuller) for stationarity
+                                    max_p = cm_params["max_p"],
+                                    max_q = cm_params["max_q"],
+                                    seasonal=True, #set to seasonal 
+                                    start_P=cm_params["start_P"],
+                                    start_Q=cm_params["start_Q"],
+                                    max_Q=cm_params["max_Q"],
+                                    m=cm_params["m"], # freqeuncy of the cycle (i.e., 12 periods ...12 months)
+                                    D=cm_params["D"], #order of the seasonal differencing ... will be estimated when seasonality = True
+                                    trace=cm_params["trace"],   # print model AIC 
+                                    error_action=cm_params["error_action"],  # don't want to know if an order does not work
+                                    suppress_warnings=cm_params["suppress_warnings"], # don't want convergence warnings
+                                    stepwise=cm_params["stepwise"]# stepwise search
+                                    )
+                    m.fit(Y_train,exogenous = Xexen_train) # fit model in place w/ exen ... similar to sklearn ... different than arima and sarimax
+
+                    
+            if model_type == "sk": # fit sk model
+                X_train = dfX_train.values  # last train index is i-1 
+                m = {} # by default model is put in a dictionary for each covariate ... will be overwritten with a single model if it is univariate
+                for _cv in covars:    # fit model to all covars
+                    if debug == True:
+                        print(f'test_train_predict: sk fit, model_type = {model_type} i = {i}, _covar = {_cv} ') 
+                    dfY_train = dfXY_train[_cv]
+                    Y_train = dfY_train.values
+                        
+                    if horizon_predict_method == "single_step":  # only one model fit for the current X_train ... predict for all horizons in single step fashion
+                        
+                        # clone model
+                        if len(covars) > 1: # multivariate, one model per covar
+                            m[_cv] = clone(model[_cv])
+                            m[_cv].fit(X_train,Y_train)
+                        else :             # univariate, one model
+                            m = clone(model)
+                            m.fit(X_train,Y_train)
+                        
+                        if debug == True:
+                            print(f'test_train_predict: sk fit, covariate _cv = {_cv}')
+                            print(f'test_train_predict: sk model fit, X_train.shape =',X_train.shape)
+                            print(f'test_train_predict: sk model fit, Y_train =',Y_train)
+                            
+                    elif horizon_predict_method == "multi_step": # Nhorizon > 1 for multistep, family of models, one for each time-step within a forecast horizon
+                        
+                        # fit 0-th model outside the loop since the slicing will not work properly with n = 0
+                        n = 0
+                        # fit model for n = 0
+                        if len(covars) > 1: # multivariate, one model per covar
+                            model_n = clone(model[_cv])
+                            model_n.fit(X_train,Y_train[n]) 
+                            m[_cv] = [model_n]
+                        else :             # univariate, one model
+                           model_n = clone(model) # reference to the model   
+                           model_n.fit(X_train,Y_train[n])   
+                           m = [model_n]
+                           
+                        if debug == True:
+                            print(f'test_train_predict: sk model fit, X_train.shape =',X_train.shape)
+                            print(f'test_train_predict: sk model fit, Y_train[{n}].shape =',Y_train[n].shape)
+                        
+                        # fit model for n = 1 to Nhorizon (-1)
+                        for n in np.arange(1,Nhorizon,1):
+                            _X = X_train[:-n] # can use up to -n from end since there are NaNs in Y
+                            _Y_train=[dfY_train[_cv].shift(-n).values] # shift -n ... will contain n NaN s at the end ... clip off below   
+                            _Y = Y_train[:-n]  # avoid NaNs at end of Y
+                            
+                            if len(covars) > 1: # multivariate, one model per covar
+                                model_n = clone(model[_cv])
+                                model_n.fit(_X,_Y) 
+                                m[_cv] = m[_cv] +  [model_n]
+                            else :             # univariate, one model
+                                model_n = clone(model) # reference to the model   
+                                model_n.fit(_X,_Y)   
+                                m = m + [model_n]
+                        
+                            if debug == True:
+                                print(f'test_train_predict: sk model fit m[{n}] = {m[n]}')
+                                print(f'test_train_predict: sk model fit, X_train.shape =',X_train.shape)
+                                print(f'test_train_predict: sk model fit, Y_train[{n}].shape =',Y_train[n].shape)
+                                
+                        if debug == True:
+                            if len(covars) > 1:
+                                print("train_test_predict: m.keys = { " ,".join(list(m.keys()))}")
+             
+
+            if model_type == "tf": # fit tf model
+                if debug == True:
+                    print(f'train_test_predict: tf fit i = {i}')
+                    
+                dfY_train = dfXY_train[covars]
+                Y_train = dfY_train.values
+                
+                if debug == True:
+                    print("test_tran_predict: tf fit, all covars dfY_train.tail()")
+                    display(dfY_train.tail())
+                    print(f'test_train_predict: tf fit, dfY_train.shape = {dfY_train.shape}')
+
+                 # dfXlags 
+                 # ... exenvars not yet removed fro dfXlags_train 
+                 # 
+                dfXlags_train = dfX_train # .drop(catvars, axis =1) if catvars != None else dfXconts_train
+                Xlags_train = dfXlags_train.values
+                if debug == True:
+                    exen_str = "with exenvars" if exenvars !=None else ""
+                    print(f'test_train_predict: tf fit, dfXlags_train {exen_str}')
+                    display(dfXlags_train.tail(3))
+                    print(f'test_train_predict: dfXlags_train.shape = {dfXlags_train.shape} ')
+                
+                # dfXexnvars lstm == False ... if exenvars list of list and lstm == False remove exenvars from dfXlags
+                # leave exenvars with dfXlags if exenvars is list of strings
+                # if exenvars list of list then remove exenvars from dfXlags
+                if tf_params["lstm"] == False:
+                    if exenvars == None: Xexen_pred = None 
+                    if (exenvars != None and not isinstance(exenvars[0],str)):   # exenvars list of strings then exenvars are with dfXlags
+                        dfXexen_train = dfXlags_train[exenvars_flat]
+                        dfXlags_train = dfXlags_train.drop(exenvars_flat,axis=1)
+                        Xlags_train = dfXlags_train.values
+                        # exenvars is list of lists ... create Xexen_train list of list
+                        Xexen_train = []
+                        for exen in (exenvars): Xexen_train = Xexen_train + [dfXexen_train[exen].values]
+                        if debug == True:
+                            print(f'train_test_predict: exenvars list of lists, Xexen_train')
+                            print(Xexen_train)
+                
+                
+                # dfXexnvars lstm == True
+                if tf_params["lstm"] == True:
+                    if exenvars == None: Xexen_pred = None
+                    if (exenvars != None):
+                        dfXexen_train = dfXlags_train[exenvars_flat]
+                        dfXlags_train = dfXlags_train.drop(exenvars_flat,axis=1)
+                        Xlags_train = dfXlags_train.values
+                        if not isinstance(exenvars[0],str):
+                            Xexen_train = []
+                            for exen in (exenvars): Xexen_train = Xexen_train + [dfXexen_train[exen].values]
+                        else:
+                            Xexen_train = dfXexen_train.values
+                        if debug == True:
+                            print(f'train_test_predict: exenvars Xexen_train')
+                            print(Xexen_train)
+                            
+                if debug == True:
+                    print(f'test_train_predict: tf fit, dfXlags_train')
+                    display(dfXlags_train.tail(3))
+
+                # X cats is a list of dataframes ... embeddings will be a list of inputs
+                Xcats_train_list =  [dfXcats_train[c].values for c in catvars] if catvars != None else None
+                
+                if debug == True:
+                    print(f'train_test_predict: Xcats_train_list')
+                    print(Xcats_train_list)
+
+                # X_train
+                X_train =  [ Xlags_train.reshape(Xlags_train.shape[0], Nlags, Ncovars) ] if tf_params["lstm"] == True else [Xlags_train]
+                if exenvars != None and catvars != None: 
+                    if not isinstance(exenvars[0],str):
+                        for Xexen_t in Xexen_train: X_train = X_train + [Xexen_t] 
+                        X_train = X_train + Xcats_train_list if catvars != None else X_train
+                    else:
+                        if tf_params["lstm"] == True:
+                            X_train = X_train + [Xexen_train] +  Xcats_train_list  if catvars != None else X_train 
+                        else:
+                            X_train = X_train +  Xcats_train_list
+                elif exenvars == None and catvars != None:
+                    X_train = X_train + Xcats_train_list            
+                else:
+                    X_train = X_train # this is the default ... exenvars == None catvars == None
+                
+                if debug == True:
+                    for n in np.arange(0,len(X_train)):
+                        print(f'test_train_predict: X_train[{n}].shape = {X_train[n].shape}')
+                        print(f'X_train[{n}][{X_train[n].shape[0]-1}] = {X_train[n][X_train[n].shape[0]-1]}')
+   
+                if i == i_initial_pred:
+                    if verbose == True or debug == True:
+                        print(f'test_train_predict: tf initial fit, i = {i}')
+                        print("Nepochs_i =",tf_params["Nepochs_i"])
+                        #print(f'test_train_predict: X_train = {X_train}')
+                    
+                    m=model # set a pointer to the model ... do not clone ...cloning will require compiling and implementng redundent TF logic ... dont do that outside of sforecast
+                                        
+                    history_i=m.fit(X_train,Y_train,epochs=tf_params["Nepochs_i"], batch_size = tf_params["batch_size"], verbose=0)
+                else:
+                    # this will tune the previously trained model ... Nepochs_t < Nepochs_i
+                    
+                    if verbose == True:  
+                        print(f'test_train_predict: tf fit/tune, i = {i}')
+                        print("Nepochs_t =",tf_params["Nepochs_t"])
+                    
+                    
+                    history_t=m.fit(X_train,Y_train,epochs=tf_params["Nepochs_t"], batch_size =tf_params["batch_size"], verbose=0)      
+
+        
+        ##### test-predict , predict ####
+        # predict if predict==True and i <=i_last_predict
+        # predict if fit==True ... and i <=i_last_predict and if Ntest > 0  
+        
+        #### Inner Loop .. test, predict ...
+        inner_loop_break = False
+        for k in np.arange(0,N_loop_step,1):
+            if inner_loop_break == True:
+                break
+            if debug == True:
+                print("  train_test_predict: inner-loop, test-predict, predict, i <= i_last_predict, i_last_predict = ",i_last_predict, ", i = ",i, ",k =",k) 
+            ## X_test ... Xexen_test, Xcats_test
+            if i <= i_last_predict:  #  the last row is only for the final fit ... if this is i_lastrow the prediction happened on previous i ...
+                
+                if (fit==True and  Ntest > 0) or predict==True:   #### fit-test/predict or predict ####
+                    
+                    ##########################
+                    #### X_test/pred  Xexen_test/red  
+                    if model_type == "sk":   # sk X_test and predict
+                        
+                        # emulate N-step forecast with k inner loop
+                        if debug == True:
+                            print(f'  test_train_predict: sk, test, predict, {horizon_predict_method}  i =  {i} , k = {k}')                        
+
+                        
+                        if horizon_predict_method == "single_step" or k == 0:   # single_step any k or multi_step only when k == 0
+                        
+                            p_index = [dfxy.index[i+k]] if fit == True else [index_pred[i+k]]
+                            
+                            dfXY_pred = pd.DataFrame(data = {_cv:np.NaN for _cv in covars } , columns = covars, index = p_index)
+                            
+                            # update y with previous prediction in covarlags
+                            if (fit == True and k > 0) or (predict == True and predict_cnt > 0): 
+                                # update the previous y in make_lags
+                                for _cv in covars:
+                                    make_lags.set_last_y(_cv,y_pred_nda[_cv][predict_cnt-1], debug=debug)
+                            # lags
+                            dfXY_pred = make_lags.transform(dfnewrows=dfXY_pred, Nout = 1, debug=debug)
+                            dfX_pred = dfXY_pred.drop(covars,axis=1)
+                            
+                                                            
+                            # exogs
+                            #dfXexen[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values if exogvars != None else dfXexen
+                            if fit == True:
+                                if exogvars != None: dfX_pred[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values
+                            elif predict == True:
+                                if exogvars != None: dfX_pred[exogvars] = pred_params["dfexogs"].iloc[i+k:i+k+1].values
+                            
+                            # derived attributes
+                            if derived:
+                                dfX_pred = make_derived_attributes.transform(dfnewrows=dfX_pred,Nout=1 )
+                                
+                            # scale
+                            dfX_pred = scaler.transform(dfX_pred)
+                            X_pred = dfX_pred.values
+                                    
+                        if debug == True:
+                            print(f'  test_train_predict: sk test, predict {horizon_predict_method}, dfX_pred.tail()')
+                            display(dfX_pred.tail(3))
+
+                    
+                    elif model_type == "tf": # tf X_test/pred  ... only single-step method (1-step k=1:Nhorizon) is supported
+  
+                        # dfXY_pred
+                        p_index = [dfxy.index[i+k]] if fit == True else [index_pred[i+k]]
+                        dfXY_pred = pd.DataFrame(data = {_cv:np.NaN for _cv in covars } , columns = covars, index = p_index)
+                        
+                        #Lags
+                        # update y with previous prediction in covarlags
+                        if (fit == True and k > 0) or (predict == True and predict_cnt > 0): # 
+                            # update the previous y in make_lags
+                            for _cv in covars:
+                                make_lags.set_last_y(_cv,y_pred_nda[_cv][predict_cnt-1])  #
+                                    
+                        dfXY_pred = make_lags.transform(dfnewrows=dfXY_pred, Nout = 1, debug=debug)
+                        dfX_pred = dfXY_pred.drop(covars,axis=1) 
+                        
+                        # exogs
+                        #dfXexen[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values if exogvars != None else dfXexen
+                        if fit == True:
+                            if exogvars != None: dfX_pred[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values
+                        elif predict == True:
+                            if exogvars != None: dfX_pred[exogvars] = pred_params["dfexogs"].iloc[i+k:i+k+1].values
+                            
+                        
+                        # endogs ... derived 
+                        if derived:
+                            dfX_pred = make_derived_attributes.transform(dfnewrows=dfX_pred,Nout=1 )
+                            
+                        if debug == True:
+                            exen_str = "w exenvars" if exenvars != None else ""
+                            print(f'  test_train_predict: df_pred {exen_str}')
+                            display(dfX_pred.tail(3))
+
+                        # scale
+                        dfX_pred =  scaler.transform(dfX_pred) # scaler.transform(dfX_pred.drop(catvars,axis=1)) if catvars != None else
+                        
+                        #Xlags_pred  
+                        dfXlags_pred = dfX_pred # may contain exenvars if exenvars != None
+                        if debug == True:
+                            exen_str = "with exenvvars"  if exenvars != None else ""
+                            print(f'test_train_predict: dfXlags_pred {exen_str}')
+                            display(dfXlags_pred.tail(3))
+                            
+                        # dfXexen lstm == False
+                        #  create Xexen_pred
+                        #  remove exenvars from dfXlags
+                        if tf_params["lstm"] == False:
+                            if exenvars == None: Xexen_pred = None
+                            if exenvars != None and not isinstance(exenvars[0],str): # list of lists
+                                dfXexen_pred = dfX_pred[exenvars_flat]
+                                dfXlags_pred = dfXlags_pred.drop(exenvars_flat, axis =1) 
+                                Xexen_pred = []
+                                for exen in (exenvars): Xexen_pred = Xexen_pred + [dfXexen_pred[exen].values]
+                                if debug == True:
+                                    print(f'test_train_predict: dfXexen_pred')
+                                    display(dfXexen_pred.tail(3))
+                                    print(f'train_test_predict: exenvars list of lists, Xexen_pred')
+                                    print(Xexen_pred)
+                         
+                        # dfXexnvars lstm == True    
+                        if tf_params["lstm"]== True:
+                            if exenvars == None: Xexen_pred = None
+                            if exenvars != None: # list of lists
+                                dfXexen_pred = dfX_pred[exenvars_flat]
+                                dfXlags_pred = dfXlags_pred.drop(exenvars_flat, axis =1) 
+                                if not isinstance(exenvars[0],str):
+                                    Xexen_pred = []
+                                    for exen in (exenvars): Xexen_pred = Xexen_pred + [dfXexen_pred[exen].values]
+                                else:
+                                    Xexen_pred = dfXexen_pred.values
+
+                        Xlags_pred = dfXlags_pred.values
+                        if debug == True:
+                            print(f'test_train_predict: dfXlags_pred')
+                            display(dfXlags_pred.tail(3))
+                                
+                                
+                        #Xcats_predLlist
+                        if catvars != None:
+                            if fit ==True:
+                                dfXcats_pred = dfxy[catvars].iloc[i+k:i+k+1]
+                            elif predict == True:
+                                dfXcats_pred = pred_params["dfcats"].iloc[i+k:i+k+1]
+                            Xcats_pred_list =  [dfXcats_pred[c].values for c in catvars] 
+                            if debug == True:
+                                print(f'  test_train_predict: dfXcats_pred')
+                                display(dfXcats_pred.tail())
+                                
+                        
+                        #[ Xlags_train.reshape(Xlags_train.shape[0], Nlags, Ncovars) ]
+                        # X_pred 
+                        X_pred = [ Xlags_pred.reshape(1, Nlags, Ncovars)] if tf_params["lstm"] == True else [Xlags_pred] # Xlags_pred.shape[0]
+                        if exenvars != None:
+                            if not isinstance(exenvars[0],str):
+                                for Xexen_p in Xexen_pred:  X_pred = X_pred + [Xexen_p] 
+                                X_pred = X_pred +  Xcats_pred_list  if catvars != None else X_pred
+                            else:  
+                                if tf_params["lstm"] == True:
+                                    X_pred = X_pred +[ Xexen_pred ] + Xcats_pred_list  if catvars != None else X_pred
+                                else:
+                                    X_pred = X_pred + Xcats_pred_list  if catvars != None else X_pred
+                        elif exenvars == None and catvars != None:
+                            X_pred = [Xlags_pred] + Xcats_pred_list
+                        else:
+                            X_pred = Xlags_pred
+                            
+                        if debug == True:
+                            print(f'  test_train_predict: X_pred, i = {i}, k = {k}') 
+                            for n in np.arange(0,len(X_pred)):
+                                print(f'  test_train_predict: X_pred[{n}].shape {X_pred[n].shape} ')  
+                            print(f'  test_train_predict: X_pred = {X_pred}')  
+                            
+                            
+                    elif model_type == "cm": # Xexen_test, Xexog_test 
+                        if fit == True and exogvars != None and not derived:
+                            #Xexogs_test = dfX_train[exogvars][i+k :i+k+1].values
+                            
+                            # Nhorizon = 1 for arima and sarimax ... in the future could emulate a multi-step forecast
+                            # Nhorizon could be > 1 for auto_arima and not derived
+                            if cm_params == "auto_arima":
+                                dfXexogs_pred = dfxy[exogvars][i:i+ Nhorizon]
+                                dfXexen_pred = dfXexogs_pred
+                            else:
+                                dfXexogs_pred = dfxy[exogvars][i + k:i+ k + 1]
+                                dfXexen_pred = dfXexogs_pred    
+                            
+                            if debug == True:
+                                print("  test_train_predict: dfXexen_test = dfXexogs_test ")
+                                display(dfXexen_pred)
+    
+                            Xexen_pred = dfXexogs_pred.values
+                            
+                        if predict == True and exogvars != None and not derived: # predict ... exogvars not derived
+                            dfXexogs_pred = pred_params["dfexogs"]
+                            if debug == True:
+                                print("  test_train_predict: predict, dfXexogs=")
+                                display(dfXexogs.tail())
+                                print("  test_train_predict: predict, index_pred =", index_pred)
+                                print("  test_train_predict: predict, k = ", k)
+                            
+                            Xexen_pred = dfXexogs_pred.values
+    
+
+                        if derived:   #  fit and derived, therefore lags needed ... exogvars may or may not be needed
+                            #X_test = dfX.iloc[i:i+1].values # get the prediction row
+                            #if exenvars != None:
+
+                            #print("train_test_predict: cm fit Xexen_test, i = ",i)
+                            # prev y or yhat
+                            # y_pred_nda
+                            # pevious y ... will become y_m1 with make_lags
+                            if debug == True:
+                                print("  test_train_predict: fit k = ", k)
+                                print("  test_train_predict: y =", y)
+                            # if k == 0 then prev_y  else if k > 0 then prev_y = prev prediction
+                            
+                            # do not yet have a y value (unlagged) so set the current y to np.NaN 
+                            # ... update later when have a predicted value ... need this to create lags
+                            
+                            p_index = [dfxy.index[i+k]] if fit == True else [index_pred[k]]
+                            dfXexen_pred = pd.DataFrame(data = [np.NaN] , columns = y, index = p_index )
+
+                            # update y with previous prediction in covarlags when k > 0
+                            if k > 0: 
+                                # update the previous y in make_lags
+                                make_lags.set_last_y(y,y_pred_nda[k-1], debug=True)
+                                if debug == True:
+                                    print("  test_train_predict: cm k =", k , ",y =", y)
+                                    print("  test_train_predict: cm y_pred_nda[k-1] =",y_pred_nda[k-1])
+                                # only autoarima with derived variables will use this .. y_pred_nda[k-1] is a scaler
+                                
+                            # exogs
+                            if exogvars != None: 
+                                dfXexen_pred[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values if fit == True else pred_params["dfexogs"].iloc[k:k+1].values 
+
+                            # make_lags
+                            dfXexen_pred = make_lags.transform(dfnewrows=dfXexen_pred, Nout = 1, debug=debug)
+                            dfXexen_pred = dfXexen_pred.drop(y,axis=1)
+                            
+                            # derived attributes
+                            dfXexen_pred = make_derived_attributes.transform(dfnewrows=dfXexen_pred,Nout=1 )
+                            dfXexen_pred = dfXexen_pred[exenvars]
+                            
+                            if debug == True:
+                                print("  test_train_predict: cm fit predict dfXexen_test w derived =")
+                                display(dfXexen_pred)
+                            
+                            Xexen_pred = dfXexen_pred.values
+                            
+                            
+                    #### test-predict, predict  #### 
+                    
+                    if model_type == "cm": # predict
+                        
+                        if  cm_params["model"] == "arima":
+                                if debug == True:
+                                    print ("  train_test_predict: cm fit predict i = ",i)
+                                y_pred = model_fit.forecast().reshape(1,1)  # arima returns a different format than sarimax below
+
+                        if  cm_params["model"] == "sarimax" :
+                            
+                            if not derived:  #
+                                if exogvars == None:
+                                    y_pred = model_fit.forecast()[0]
+                                else:
+                                    y_pred = model_fit.forecast(exog=Xexen_pred)[0]
+    
+                            else: # derived variables
+                                if derived == True:
+                                    if debug == True:
+                                        print("  train_test_fit: cm, predict with exen")                              
+                                        print("  train_test_predict: cm fit, Xexen =",Xexen_pred)
+                                    
+                                    y_pred = model_fit.forecast(exog=Xexen_pred)[0]
+                                
+                            y_pred = np.array([y_pred]).reshape(1,1)
+                            
+                            if debug == True:
+                                print("test_train_predict, cm, sarimax, y_pred =",y_pred)
+                            
+                        
+                        if cm_params["model"]== "auto_arima": # predict
+                                
+                            #call forecast on the fitted model m
+                            #n_periods = X_test.shape[0]
+                            #print("n_periods = ",n_periods)
+                            if debug == True:
+                                print("test_train_predict: autoarima, model m =",m)
+
+                            if exenvars == None:
+                                n_periods = autoarima_nperiods  # N_loop_step = Nhorizon ... 
+                                y_pred = m.predict(n_periods) 
+                                # reshape for consistenty with y_test, eg ... error = y_test - y_pred 
+                                y_pred = np.array([y_pred]).reshape(n_periods,1) 
+                                inner_loop_break = True # complete the inner loop since did an nperiod forecast/predictin
+                                if debug == True:
+                                    print("  test_train_predict: ypred autoarima  = ", y_pred)
+                                    print("  test_train_predict: ypred autoarima, n_periods = ", n_periods)
+                                    print("  test_train_predict: auto_arima, inner_loop_break = ",inner_loop_break)
+                                
+                            elif not derived and exogvars != None:
+                                n_periods = autoarima_nperiods  # N_loop_step = Nhorizon ... 
+                                y_pred = m.predict(n_periods,exogenous = Xexen_pred) 
+                                # reshape for consistenty with y_test, eg ... error = y_test - y_pred 
+                                y_pred = np.array([y_pred]).reshape(n_periods,1) 
+                                inner_loop_break = True # complete the inner loop since did an nperiod forecast/predictin
+                                if debug == True:
+                                    print("  test_train_predict: ypred autoarima w exogs and not derived = ", y_pred)
+                                    print("  test_train_predict: ypred autoarima,  n_periods = ", n_periods)
+                                    print("  test_train_predict: auto_arima, inner_loop_break = ",inner_loop_break)
+                                
+                            else:  # exenvars not None
+                                y_pred = m.predict(n_periods = 1, exogenous = Xexen_pred)
+                                if debug == True:
+                                    y_pred = np.array([y_pred]).reshape(1,1)
+                                
+                            if debug == True:
+                                print("  test_train_predict: autoarima")
+                                print("  test_train_predict, cm, y_pred =",y_pred)
+                            
+                    elif model_type == "sk": # sklearn predict
+                        y_pred = {}
+                        if horizon_predict_method == "single_step":
+                            for _cv in covars: 
+                                if len(covars) == 1: # univariate
+                                    y_pred[_cv] = m.predict(X_pred) # X_pred changes for each k, model stays constant
+                                else: # multi-variate
+                                    y_pred[_cv] = m[_cv].predict(X_pred) # X_pred changes for each k, model stays constant
+                                if debug == True:
+                                    print(f'  test_train_predict: sk test, predict, signle_step, model_type = {model_type}, m, ypred[{_cv}] = {y_pred[_cv]}')
+                        
+                        elif horizon_predict_method == "multi_step":
+                            if len(covars) > 1:
+                                y_pred = m[_cv][k].predict(X_pred) # prediction ... X_pred changes only with k == 0, model changes for each k
+                            else:
+                                y_pred = m[k].predict(X_pred) 
+                            if debug == True:
+                                print(f'  test_train_predict: sk test, predict, multi_step, model_type = {model_type}, m[{k}], ypred = {y_pred}')
+                        
+                        if debug == True:
+                            print(f'test_train_predict: y_pred.keys() = {", ".join(list(y_pred.keys()))}  ') 
+                            
+                    else: # tf predict ... must, predict all covariates simultaneously
+                        
+                        y_pred = m.predict(X_pred)
+                        
+                        if debug== True:
+                            print(f'  test_train_predict: tf predict, i ={i}, k = {k}')
+                            print(f'  test_train_predict: tf predict, y_pred = {y_pred}, y_pred.shape = {y_pred.shape}')
+                            print(f'  test_train_predict: tf predict, y_pred.shape = {y_pred.shape}')
+                        
+                ### end of predict ... assimalate pred results y_pred_nda, y_test_nda, y_pred_idx
+                
+                    if debug == True:
+                        print("test_train_predict: predict_cnt =",predict_cnt) 
+                        
+                    ### y_pred_nda
+                    if model_type == "sk": # y_pred_nda and y_test_nda
+                        
+                        if fit == True:
+                            dfcv_test = dfxy[covars].iloc[i + k:i + k + 1]
+                            y_test = dfcv_test.values
+                        
+                            if debug == True:
+                                print(f'  test_train_predict: k dfcv_test, i = {i}, k = {k}')
+                                display(dfxy[covars])
+                        
+                        if i == i_initial_pred and k == 0:
+                            y_pred_nda = {}
+                            if fit == True: y_test_nda = {}
+
+                        for n,_cv in enumerate(covars): # y_pred and  y_test for each covar
+                            if (i != i_initial_pred or k > 0 ):
+                                y_pred_nda[_cv] = np.append(y_pred_nda[_cv],y_pred[_cv],axis=0) 
+                                if fit == True: y_test_nda[_cv] = np.append(y_test_nda[_cv],np.array(y_test[0][n]).reshape(1,1),axis=0) 
+                            else:
+                                y_pred_nda[_cv] = y_pred[_cv]
+                                if fit == True: y_test_nda[_cv] = np.array(y_test[0][n]).reshape(1,1)
+                                   
+                        if fit == True:
+                            _pred_idx = [i + k + Nclip ]  # iloc index (ith)
+                            y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx     
+                   
+                    
+                    # save indexes to put back into original data frame ... adjust for Nclip ... externally there is no clip so add Nclip back to get the -th index correct                      
+                    elif model_type == "cm" and cm_params["model"] == "auto_arima" and not derived:
+
+                            if fit == True:
+                                y_test = dfy.iloc[i:i + Nhorizon].values 
+                                #    _n_idx takes care of potential idx mismatch for such a case
+                                _n_idx = y_test.shape[0] # this is iloc type index not loc index
+                                _pred_idx = list(np.arange(i,i + _n_idx,1)+ Nclip)
+                                y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx
+                                y_test_nda = np.append(y_test_nda,y_test,axis=0) if (i != i_initial_pred or k > 0 ) else y_test 
+
+                            y_pred_nda = np.append(y_pred_nda,y_pred,axis=0) if (i != i_initial_pred or k > 0 ) else y_pred 
+                            
+                            if predict == True:
+                                outer_loop_break = True
+                                
+                    elif model_type == "cm":  # cm autoarima with derived/endogenous
+                        
+                        y_pred_nda = np.append(y_pred_nda,y_pred,axis=0) if (i != i_initial_pred or k > 0 ) else y_pred 
+                        _pred_idx = [i + k + Nclip ]  # iloc index (ith)
+                        y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx
+                        
+                        if fit == True:
+                            y_test = dfy.iloc[i + k:i + k + 1].values
+                            y_test_nda = np.append(y_test_nda,y_test,axis=0) if (i != i_initial_pred or k > 0 ) else y_test
+                                
+                    elif model_type == "tf": # tf ... assimilate pred results y_pred_nda, y_test_nda
+                    
+                        if fit == True:
+                            dfcv_test = dfxy[covars].iloc[i + k:i + k + 1]
+                            y_test = dfcv_test.values
+                            if debug == True:
+                                print(f'  test_train_predict:dfcv_test, dfcv_test.shape = {dfcv_test.shape}, i = {i}, k = {k}')
+                                display(dfcv_test)
+                            
+                        if i == i_initial_pred and k == 0:
+                            y_pred_nda = {}
+                            if fit == True: y_test_nda = {}
+                            
+                        for n,_cv in enumerate(covars): # y_pred and  y_tests for each covar
+                            if (i != i_initial_pred or k > 0 ):
+                                y_pred_nda[_cv] = np.append(y_pred_nda[_cv],np.array(y_pred[0,n]).reshape(1,1),axis=0) 
+                                if fit == True: 
+                                    y_test_nda[_cv] = np.append(y_test_nda[_cv],np.array(y_test[0][n]).reshape(1,1),axis=0)
+                            else:
+                                y_pred_nda[_cv] = np.array(y_pred[0,n]).reshape(1,1)
+                                if fit == True: y_test_nda[_cv] = np.array(y_test[0][n]).reshape(1,1)
+                            
+                        #y_pred_nda = np.append(y_pred_nda,y_pred,axis=0) if (i != i_initial_pred or k > 0 ) else y_pred 
+                        
+                        if debug == True:
+                            print(f'  test_train_predict: tf y_pred_nda = {y_pred_nda}')
+                            if fit == True:
+                                print(f'  test_train_predict: tf y_test_nda = {y_test_nda}')
+                        
+                        if fit == True:
+                            _pred_idx = [i + k + Nclip ]  # iloc index (ith)
+                            y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx    
+
+                    if predict == True:
+                        _pred_idx = [index_pred[predict_cnt]]
+                        y_pred_idx = y_pred_idx + _pred_idx if (predict_cnt > 0) else  _pred_idx
+                        y_test = None
+                        y_test_nda = None   
+
+                    predict_cnt += 1
+                                
+                else: # fit = True and Ntest = 0
+                # if not predicting then set test and pred variables to NaN
+                    y_test_nda = None
+                    y_pred_nda = None
+                    y_pred_idx = dfX.index[dfX.index.size - 1 ]
+                    
+                if debug == True:
+                    print(f' test_train_predict:  i = {i}, k = {k}, i_initial_pred = {i_initial_pred}')
+                    print("  test_train_predict: y_pred_nda =",y_pred_nda)
+                    print("  test_train_predict: y_test_nda =",y_test_nda)
+                    print("  test_train_predict: _pred_idx", _pred_idx)
+                    print("  test_train_predict: y_pred_idx",y_pred_idx)
+
+                    
+            #print("test_train_predict: y_pred_nda =",y_pred_nda)
+                
+    return_tuple = None 
+    i_initial_pred = i_initial_pred + Nclip # adjust for the next level up, where Nclip was not removed from nitial rows
+    
+    if model_type == "cm":
+        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler
+    if model_type == "sk":
+        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m, i_initial_pred, make_derived_attributes, make_lags, scaler
+    elif model_type =="tf":
+        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m, history_i, history_t,i_initial_pred, make_derived_attributes, make_lags, scaler
+            
+    return return_tuple  ### test_train_predict ###
+
+
+def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=None, tf_params=None, scale_params = None,
+                     fit=True, predict=False, predict_params = None,  verbose = False, debug = False):
     
     '''Receives as input DataFrame of X (exogenous + co-vvariates)  and Y (single or multiple forecasts), and an untrained model of type SKLearn or TensorFlow.
 
@@ -459,217 +1334,347 @@ def sliding_forecast(dfXY, y, model, model_type="sk", covars=None, catvars=None,
         
         model_type (str): Default = "sk" or "tf". Default = "sk".
         
-        Nobserve (int): number of observations to include in the training data (counting back from the first prediction).  
+        swin_params (dictionary): dictioaary of sliding window parameters
+            * covars (list):  List of co-variates. If not already present, the y forecast variable(s) will be added to the co_vars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values >0 and <= Nlags are included in the training variables. Defaults to None.
+            * catvars (list):  List of categorical variables, only relevant for TensorFlow models. Default = None.
+            * exenvars (list):  List of exogenous and endogenous continuous variables. Default is None. exenvars can be a list of lists, for example, in which case it represents groups of variables that can be processed differently by a TensorFlow model. Categorical variables are contained in catvars, not in exenvars, though they are a type of exogenous variable. 
+            * Nlags (int): For each of the covariates, add a lagged variable to the training from 1 to Nlags . Lagged variables account for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
+            * Ntest (int): number of predictions to make. Defaults to 1.    
+            * alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
+            * Nhorizon (int):  N-step (i.e., Nhorizon) forecast. For example, the sliding (or expanding) window will move forward by Nhorizons after Nhorizon predictions. Default to 1.
+            * minmax (tuple): dsfsadlfjasdlfj
+            * i_start (int):  The first prediction, where i corresponds to the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Ntest + 1. Defaults to None.
+            * idx_start (int): The first prediction specified by the DataFrame index. idx_start takes presidence over i_start. Defaults to None.
+            * ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows.   
+                * method from the mumpy.percentile function, one of  
+                    * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
+                    * "minmax" - the min and max values observed errors
+                    * "tdistribution" - compute the t-distribution confidence interval
+            * LastPredRow (Boolean): Default = False. If True the last row of the input dataframe (target variables removed) is saved (variable name = "dfXpredict", 1-row DataFrame ) for subsqequent N-step (N = Nhorizon) forecast. dfXpredict is used as the prediction input when the predict method is called. Note, it is convenient to save dfXpredict DataFrame since it will include the proper pre-processed variables including lags and scale.
         
-        covars (list):  List of co-variates. If not already present, the y forecast variable(s) will be added to the co_vars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values >0 and <= Nlags are included in the training variables. Defaults to None.
+        tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
+            * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
+            * Nepochs_t: Numbre of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
+            * batch_size: Defaults to 32
+            * lstm: defaults to False
+                    
+        scale_params (Dictionary): Dictionary of variables to indicate the columns and scaling methods
+            * mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If scale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If scale_params["mms_cols"] = list of columns then the corresponding columns are scaled with the MinMax scaler.   
+            * ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If scale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If scale_params["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
+            * mm_scaler (model): MinMax scaler model. Defaults to None. THe MinMax scaler model from the fit operation will be passed in for a predict operation (i.e., fit = False)
+            * s_Scaler (model): Standard scaler model. Defautls to None.THe Standard scaler model from the fit operation will be passed in for a predict operation (i.e., fit = False)
         
-        catvars (list):  List of categorical variables, only relevant for TensorFlow models. Default = None.
+        fit (Booelan): Default = True. Fit a model with sliding forecast (past training and future test) observations. Eiither fit == True or predict = True is required. When fit = False, then predict using the previously trained model. Variables will be scaled with the fitted scalers (MinMax or Standard).
+        predict (Boolean): Default = False. 
         
-        exogvars (list):  List of exogenous (continuous) variables. Note, in sf_forecast exogenous categorical variables are contained in cat_vars, not in exog_vars, though they are both a type of exogenous variable. Default = None. For the case of TensorFlow models, exog_vars are processed differently than covariate lagged variables. For example, exog_vars could be input to a dense network, while covariates could be input to an LSTM network, in which case require different formats. Use of exog_vars is optional. For example, if all continuous variables (e.g., exog_vars, and covariable lags) are input to a dense network, then there is no need to specifically identify the exog_vars.
-    
-        Nlags (int): For each of the covariates, add a lagged variable to the training from 1 to Nlags . Lagged variables account for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
-    
-        Npred (int): number of predictions to make. Defaults to 1. 
-        
-        alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
-    
-        Nhorizon (int):  N-step (i.e., Nhorizon) forecast. For example, the sliding (or expanding) window will move forward by Nhorizons after Nhorizon predictions. Default to 1.
-        
-        tf_params: afjdsfjdl
-        
-        statsmodel: dsfsafl
-        
-        minmax (tuple): dsfsadlfjasdlfj
-    
-        i_start (int):  The first prediction, where i corresponds to the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Npred + 1. Defaults to None.
-    
-        idx_start (int): The first prediction specified by the DataFrame index. idx_start takes presidence over i_start. Defaults to None.
-    
-        ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows.   
-        
-            * method from the mumpy.percentile function, one of  
-            
-                * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
-            
-                * "minmax" - the min and max values observed errors
-                
-                * "tdistribution" - compute the t-distribution confidence interval
-                
-
-        mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = list of columns then the corresponding columns are scaled with the MinMax scaler.
-                
-        ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
+        dfXYfit (DataFrame): Dataframe from saved from the fit operation. Predict using the previously fit model. Eiither fit == True or predict = True is required.
             
         verbose: True or False. Defaults to False.
 
     Returns:
-        tuple: dfXYfc, df_pred, metrics, m, history_i, history_t, model_fit 
-            * dfXYfc: XY forecast DataFrame including lagged variables
+        tuple: dfXY, df_pred, metrics, m, history_i, history_t, model_fit 
+            * dfXY: XY forecast DataFrame including lagged variables. The rows include all observations. The last row returned corresponds the last training row dfX (after removing y) for predicting/forecast the next N-step forecast (N-step = Nhorizon)
             * df_pred: predictions. See documentation for sforcast.forecast.
             * metrics: Dictionary containg MSE and MAE for the corresponding predictions
             * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
             * model_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
             * history_i: TensorFlow training history (initial training)
             * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
+            * mmscaler: fitted MinMax scaler if used for scaling, otherwise returns None.
+            * scaler: fitted StandardScaler if used for scaling, otherwise returns None.
    '''
-    
-    # if y not in covars then add to covars
-    # ensure y is iterable
-    # ensure _co_vars is iterable
-    y = [y] if isinstance(y,str) else y
-    if covars == None: covars = []
-    covars = [covars] if isinstance(covars,str) else covars
-    for _y in  y: 
-        if _y not in covars: covars.append(_y)   
-        
-    # ensure minmax is iterable ... same length as y ... if there is only one minmax pair then duplicate
-    if isinstance(minmax,tuple): minmax = [minmax]
-    _minmax = minmax.copy()
-    _minmax = len(y)*_minmax if (len(_minmax) != len(y)) and (len(_minmax)==1) else _minmax
 
-    # assertions
-    assert len(y)==len(_minmax), f'length of minmax tuples = {len(minmax)}, should equal the number of y targets'
+    # extract variables from input dictionaries
+    minmax = swin_params["minmax"]
+    Ntest = swin_params["Ntest"]  
+    Nhorizon = swin_params["Nhorizon"] 
+    alpha = swin_params["alpha"]
+    ci_method = swin_params["ci_method"]
+    covars = swin_params["covars"]
     
+    ci = {} # initialize empty confidence interval dictionary
+    
+    if debug == True:
+        print(f'sliding_forecast: y = {y}')
+     
+    # setup m ... return model
+    if len(y) > 1 and ( model_type == "sk" or model_type == "cm"):
+        m = {}
+        m_fit = {}
+    else:
+        m = None
+        m_fit = None
+
+    if debug == True:
+        print(f'sliding_forecast: {model_type}, model  = {type(model)}')
+        print("sliding_forecast: type(m) = ",type(m))
+        if model_type == "cm" or model_type == "sk":
+            dummy = print(f'sliding_forecast: {model_type}, model keys = {" ,".join(list(model.keys()))}') if len(y )> 1 else None
+
+    #### Assert Fit or Predict not both ####
+    # make sure that only one of Fit or Predict is True
+    if fit ==True:
+        assert predict == False, f'predict must be False if fit == True'
+    assert (fit == True or predict == True), f'Either fit or predict must be True'
+    
+    # predict parameters
+    # if predict == False then fit operation will set the predict parameters
+    if predict == True:
+        index_pred = predict_params["index"] 
+        Nhorizon = swin_params["Nhorizon"] 
+        make_lags = predict_params["make_lags"]
+        make_derived_attributes = predict_params["make_derived_attributes"]
+        
+    # if fit = True then fit it will manage the predict parameters
+    if fit == True:
+        predict_params = {}
+    
+    #### copy df
     # copy the input dataframe to ensure the original is not modified
-    dfXYfc = dfXY.copy()
-    
-    # covariate lags
-    # statsmodels manage lags
-    if model_type != "cm":
-        if Nlags > 0:
-            dfXYfc = nlag_covars(dfXY,covars, Nlags)
-            dfXYfc = dfXYfc.iloc[Nlags:].copy()  # delete the first Nlags rows since they will contain NaNs
+    dfXY = None
+    dfXY = df.copy() if fit == True else None
 
-    # Scale the X inputs 
-    #  covar lags (not unlagged) and exogenous variables are scaled ..  
-    #  y (target variables) not scaled
-    #  do not scale if model_type = "cm"
-    if model_type != "cm":
-        dfXYfc_scaled = dfXYfc # by detault dfXYfc_scaled = dfXYfc
-        if mms_cols != None:
-            if (mms_cols == "all") & (ss_cols != "all"): 
-                mms_scaler =  MinMaxScaler()
-                dfXYfc_scaled = mms_scaler.fit_transform(dfXYfc).copy()
-                dfXYfc_scaled = pd.DataFrame(dfXYfc_scaled, columns = dfXYfc.columns, index = dfXYfc.index)
-            elif mms_cols != "all":
-                mms_scaler =  MinMaxScaler()
-                dfXYfc_scaled = dfXYfc.copy
-                dfXYfc_scaled[mms_cols] = mms_scaler.fit_transform(dfXYfc_scaled[mms_cols])
-            dfXYfc_scaled[y] = dfXYfc[y]
-        
-        if ss_cols != None:
-            if ss_cols == "all":
-                ss_scaler = StandardScaler()
-                dfXYfc_scaled = ss_scaler(dfXYfc).copy()
-                dfXYfc_scaled = pd.DataFrame(dfXYfc_scaled, columns = dfXYfc.columns, index = dfXYfc.index)
-            else:
-                ss_scaler = StandardScaler()
-                dfXYfc_scaled = dfXYfc.copy()
-                dfXYfc_scaled[ss_cols] = ss_scaler.fit_transform(dfXYfc_scaled[ss_cols])
-            dfXYfc_scaled[y] = dfXYfc[y]
-
-        dfXYfc = dfXYfc_scaled # replaces the original dfXYfc DataFrame
-    
-    # sliding window variables
-    Ntobs = dfXYfc.index.size # total observations
-    
-     ##### Prediction  ######
-    # idx_start takes precedence over i_start
-    # initial = initial prediction
-    i_initial_pred = Ntobs - Npred if i_start == None else i_start
-    i_initial_pred = (dfXYfc.loc[:idx_start].index.size)-1 if idx_start != None else i_initial_pred  # i_nitial starts at 0, subtract 1
+    ###############################    
+    ##### Train, Test, Predict  ###
     metrics={}
     df_pred=pd.DataFrame()
     
-    # first observation
-    i1_obs = 0 if Nobserve == None else i_initial_pred - Nobserve
-    
+    # tf traning history variables
     history_i=None #  initial model history (first fit) ... tensorflow
     history_t=None # tune model history (second, third, ... fit) ... tensorflow
+    
+    # model fit variable
     model_fit=None
     
-
+    # Nh Nhorizon variable
+    Nh = Nhorizon 
+    
     # TensorFlow            
     if model_type == "tf":
         #### Nhorizon predict forward Nhorizon
         # pred all targets (all _y in y) at once
-        y_pred_values, y_test_values, y_pred_idx, m, history_i, history_t = predict_horizons(dfXYfc, y, model, 
-                    covars=covars, i_initial_pred=i_initial_pred, model_type=model_type,  catvars=catvars,                          
-                    exogvars=exogvars, Npred=Npred, Nhorizon=Nhorizon, Nlags=Nlags,tf_params=tf_params,
-                    Nobserve=Nobserve, verbose=False)
-    
-    
-    for n,_y in enumerate(y):
-        # SK Learn Model
-        # predict for every _y
-        # sk models support only univariate prediction
-        if model_type == "sk":
-            # predict each indvidual _y independently
-            _y_pred_values, _y_test_values, y_pred_idx, m = predict_horizons(dfXYfc, _y, model, 
-            covars=covars, i_initial_pred=i_initial_pred, model_type=model_type,  catvars=catvars,                          
-            exogvars=exogvars, Npred=Npred, Nhorizon=Nhorizon, Nlags=Nlags, tf_params=tf_params,
-            Nobserve=Nobserve, verbose=False)
+        # TensorFlow uses one model to make all covariate predictions simultaneously
+        
+        if debug == True:
+            print(f'sliding_forecast: tf,  covars = {covars}')
+            print(f'sliding_forecast: tf,  y = {y}')
+            print("sliding_forecast: tf, type(model_in) =",type(model))
+
+        y_pred_values, y_test_values, y_pred_idx, model_out, history_i, history_t, i_initial_pred, make_derived_attributes, make_lags, scaler = train_test_predict(dfXY, y, model, 
+                    model_type=model_type, swin_params=swin_params,tf_params=tf_params,scale_params = scale_params,
+                    fit=fit, predict=predict, pred_params=predict_params, verbose=verbose, debug=debug)
+        
+        m = model_out  # TF will return a single model
+        
+        if fit==True and y_test_values != None:
+            for _cv in covars: y_test_values[_cv] = y_test_values[_cv].flatten()
             
+        for _cv in covars:
+            if (fit == True and Ntest > 0) or predict == True:
+                y_pred_values[_cv] = y_pred_values[_cv].flatten()
+
+        
+        if debug == True:
+            print("sliding_forecast: model_type = tf, y_pred_values =",y_pred_values)
+            print("sliding_forecast: model_type = tf, y_test_values =",y_test_values)
+            print("sliding_forecast: model_type = tf , y_pred_idx =",y_pred_idx)
+
+    
+    if model_type == "sk":
+        # pred all targets (all _y in y) at once
+        # one model per y variable ... one model per Nhorizon timestep  
+        # if one model and Nhorizon = 1 then model_in is only one model (not a dictionary and not a list)
+        
+        
+        if debug == True:
+            print(f'sliding_forecast: sk,  covars = {covars}')
+            print(f'sliding_forecast: sk,  y = {y}')
+            print("sliding_forecast: sk, type(model_in) =",type(model))
+                    
+        y_pred_values, y_test_values, y_pred_idx, model_out, i_initial_pred, make_derived_attributes, make_lags, scaler  = train_test_predict(dfXY, y, model, 
+        model_type=model_type, swin_params=swin_params, cm_params=cm_params, tf_params=tf_params, scale_params = scale_params,
+            fit = fit, predict=predict, pred_params=predict_params,verbose=verbose, debug=debug)
+        
+        
+        m = model_out
+        
+        if fit==True and y_test_values != None:
+            for _cv in covars: y_test_values[_cv] = y_test_values[_cv].flatten()
+        
+        if debug == True:
+            print("sliding_forecast: model_type = sk, y_pred_values =",y_pred_values)
+            print("sliding_forecast: model_type = sk, y_test_values =",y_test_values)
+            print("sliding_forecast: model_type = sk, y_pred_idx =",y_pred_idx)
+            if len(covars) > 1:
+                print(f'slidng_forecast: m.keys() = {list(m.keys())}')
+            else:
+               print(f'slidng_forecast: m = {m}')
+
+    # loop throuh each variable
+    # for sk and tf train_test_predict is called above
+    # for cm models call train_test_predict for each variable (do not support multivariate forecasting)
+    # assimilate prediciton resutls ... for each y, metrics, confidence intervals
+    for n,_y in enumerate(y):  
+
+                 
         # classic forecast models arima and sarimax (fyi - see above for auto arima)
         # support only 1-step (Nhorizon = 1), univariate predictition (for every _y)
-        elif model_type == "cm":
-            _y_pred_values, _y_test_values, y_pred_idx, m, model_fit = predict_horizons(dfXYfc, y, model, 
-                    covars=covars, i_initial_pred=i_initial_pred, model_type=model_type,  catvars=catvars,                          
-                    exogvars=exogvars, Npred=Npred, Nhorizon=Nhorizon, Nlags=Nlags,tf_params=tf_params,
-                    Nobserve=Nobserve, cm_params=cm_params, verbose=False)
-        
-        # tf prediction done for all y's simultaneosly above (outside of loop) ... manage the variable inside loop    
+        if model_type == "cm":
+
+            # Nh = Nhorizon if fit == True or Nhorizon if predict == True
+            
+            if debug == True:
+                print(f'sliding_forecast: _y = {_y}')
+                print(f'sliding_forecast: type(model) = {type(model)}')
+                
+            model_in = model if len(y) == 1 else model[_y] # dict of models, one for every _y
+            
+            _y_pred_values, _y_test_values, y_pred_idx, model_out, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler = train_test_predict(dfXY, _y, model_in, 
+                    model_type=model_type, swin_params = swin_params, tf_params=tf_params, scale_params = scale_params,
+                    cm_params=cm_params, fit = fit, predict=predict,
+                    pred_params=predict_params, verbose=verbose, debug=debug )
+
+            if len(y) == 1:
+                m = model_out
+                m_fit = model_fit
+            else:
+                m[_y] = model_out
+                m_fit[_y] = model_fit
+                
+            
+            _y_test_values = _y_test_values.flatten() if isinstance(_y_test_values,np.ndarray) else _y_test_values 
+            _y_pred_values = _y_pred_values.flatten() if isinstance(_y_pred_values,np.ndarray) else _y_pred_values 
+            
+            if debug == True:
+                print(f'sliding_forecast: _y = {_y}')
+                print("sliding_forecast: model_type = cm, _y_pred_values =",_y_pred_values)
+                print("sliding_forecast: model_type = cm, _y_test_values =",_y_test_values)
+                print("sliding_forecast: model_type = cm, y_pred_idx =",y_pred_idx)
+                
+    
+        elif model_type == "sk":
+            _y_pred_values = y_pred_values[_y] if y_pred_values != None else np.NaN
+            _y_test_values = y_test_values[_y] if y_test_values != None else np.NaN
+
+        # tf prediction done for all y's simultaneosly above (outside of loop) ... manage the variables inside loop  (here)  
         elif model_type == "tf":
-            _y_pred_values = y_pred_values[:,n]
-            _y_test_values= y_test_values[:,n]
-
-        ypred_col = _y +"_pred"
-        ytrain_col = _y +"_train"
-        ytest_col  = _y +"_test"
-        error_col = _y + "_pred_error"
-
-        # y_pred, y_train, y_test
-        # apply min max limits to the forecast
-        _y_pred_values = min_vfunc(_y_pred_values,_minmax[n][0]) if _minmax[n][0] != None else _y_pred_values
-        _y_pred_values = max_vfunc(_y_pred_values,_minmax[n][1]) if _minmax[n][1] != None else _y_pred_values
-    
-        errors=list(np.array(_y_test_values) - np.array(_y_pred_values))
-        _df_pred = pd.DataFrame(index=dfXYfc.index) # keep the index from dfXYfc
-        idx = dfXYfc.iloc[y_pred_idx].index # prediction indexes
-        _df_pred[ytrain_col] = dfXYfc.iloc[i1_obs:i_initial_pred][_y] # y train
-        _df_pred[ytest_col] = dfXYfc.iloc[i_initial_pred:][_y] # y test
-        _df_pred[ypred_col] = np.nan
-        _df_pred.loc[idx, ypred_col] = _y_pred_values # prediction values 
+            _y_pred_values = y_pred_values[_y] if y_pred_values != None else np.NaN 
+            _y_test_values = y_test_values[_y] if y_test_values != None else np.NaN
+            
+        # all fits and predictions are done above ... now manage variables
         
-        _df_pred.loc[idx,error_col] = errors
-
-        # metrics dictionary ... statistics
-        y_test_array = dfXYfc[_y].iloc[i_initial_pred:i_initial_pred+Npred]
-        y_pred_array = _df_pred.iloc[i_initial_pred:i_initial_pred+Npred][ypred_col]
-        rmse_test = np.sqrt(MSE(y_test_array, y_pred_array))
-        mae_test= MAE(y_test_array, y_pred_array )
-        metrics[ypred_col] = {"RMSE":rmse_test, "MAE":mae_test}
-
-        # confidence intervals
-        _df_pred = forecast_confidence(_df_pred,alpha=alpha, error=error_col, Nhorizon=Nhorizon, method=ci_method, verbose=verbose)
-        ypred_lower = ypred_col +"_lower"
-        ypred_upper = ypred_col +"_upper"
-        _df_pred[ypred_lower] = _df_pred[ypred_col] + _df_pred["error_lower"]
-        _df_pred[ypred_upper] = _df_pred[ypred_col] + _df_pred["error_upper"]
-
-        # Apply minmax to CI
-        _df_pred[ypred_lower] = _df_pred[ypred_lower].apply(lambda x: min_func(x,_minmax[0][0])) if _minmax[0][0]!=None else  _df_pred[ypred_lower]
-        _df_pred[ypred_upper] = _df_pred[ypred_upper].apply(lambda x: max_func(x,_minmax[0][1])) if _minmax[0][1]!=None else  _df_pred[ypred_upper]
-
-        # drop error_lower and error_upper
-        _df_pred=_df_pred.drop(["error_lower","error_upper"],axis=1)    
+        ypred_col = _y +"_pred"
+        
+        if isinstance(_y_pred_values, np.ndarray):
+            # y_pred, y_train, y_test
+            # apply min max limits to the forecast
+            _y_pred_values = min_vfunc(_y_pred_values,minmax[n][0]) if minmax[n][0] != None else _y_pred_values
+            _y_pred_values = max_vfunc(_y_pred_values,minmax[n][1]) if minmax[n][1] != None else _y_pred_values
     
-        # join to wide df_pred frame
+        #print("sliding_forecast: _y_pred_values =",_y_pred_values)
+        
+        index = dfXY.index if fit == True else index_pred
+        _df_pred = pd.DataFrame(index=index) # keep the index from dfXYfc
+        
+        if fit == True:  
+            # first observation
+            i1_obs = 0 
+            
+            ytrain_col = _y +"_train"
+            ytest_col  = _y +"_test"
+            error_col = _y + "_pred_error"
+            ypred_lower = ypred_col +"_lower"
+            ypred_upper = ypred_col +"_upper"
+              
+            if Ntest > 0 : # fit true Ntest > 0 ... # metrics, errors, confidence 
+                          
+                errors=list(np.array(_y_pred_values) - np.array(_y_test_values))
+                idx = dfXY.iloc[y_pred_idx].index # prediction indexes
+                
+                if debug == True:
+                    print("slidng_forecast: _y =", _y)
+                    print("slidng_forecast: ypred_col =", ypred_col)
+                    print("sliding_forecast: _ytest_values = ",_y_test_values)
+                    print("sliding_forecast: _pred_values = ",_y_pred_values)
+                    print("sliding_forecast: errors = ", errors)
+                    print("sliding_forecast: idx = ", idx)
+                
+                _df_pred[ytrain_col] = dfXY.iloc[i1_obs:i_initial_pred][_y] # y train
+                _df_pred[ytest_col] = dfXY.iloc[i_initial_pred:][_y] # y test
+                _df_pred[ypred_col] = np.nan
+                _df_pred.loc[idx, ypred_col] = _y_pred_values # prediction value
+                
+                _df_pred.loc[idx,error_col] = errors
+                
+                # metrics dictionary ... statistics
+                N = Ntest if Ntest > 0 else 1
+                
+                N = Ntest if Ntest > 0 else Ntest
+                y_test_array = dfXY[_y].iloc[i_initial_pred:i_initial_pred+Ntest]
+                y_pred_array = _df_pred.iloc[i_initial_pred:i_initial_pred+Ntest][ypred_col]
+                         
+                rmse_test = np.sqrt(MSE(y_test_array, y_pred_array))
+                mae_test= MAE(y_test_array, y_pred_array )
+                metrics[ypred_col] = {"RMSE":rmse_test, "MAE":mae_test}
+
+                # confidence intervals
+                #  returns error_lower, error_upper
+                _df_pred, nh_err_lowerupper = forecast_confidence(_df_pred, alpha=alpha, error=error_col, Nhorizon = Nhorizon, method=ci_method, verbose=verbose, debug=debug)
+                _df_pred[ypred_lower] = _df_pred[ypred_col] + _df_pred["error_lower"]
+                _df_pred[ypred_upper] = _df_pred[ypred_col] + _df_pred["error_upper"]
+                
+                if debug == True:
+                    print("nh_err_lowerupper = ",nh_err_lowerupper)
+                    print(type(nh_err_lowerupper))
+                ci[_y] = nh_err_lowerupper
+
+                # Apply minmax to CI
+                _df_pred[ypred_lower] = _df_pred[ypred_lower].apply(lambda x: min_func(x,minmax[0][0])) if minmax[0][0]!=None else  _df_pred[ypred_lower]
+                _df_pred[ypred_upper] = _df_pred[ypred_upper].apply(lambda x: max_func(x,minmax[0][1])) if minmax[0][1]!=None else  _df_pred[ypred_upper]
+
+                # drop error_lower and error_upper
+                _df_pred=_df_pred.drop(["error_lower","error_upper"],axis=1)  
+                
+            else:    # fit==True, Ntest == 0   
+                i_last_row= dfXY.index.size -1
+                idx = dfXY.iloc[i_last_row:i_last_row + 1].index # set idx to last test idx
+                errors = np.NaN  
+                _df_pred[ytrain_col] = dfXY[_y] # y train
+                _df_pred[ytest_col] = np.NaN # y test
+                _df_pred[ypred_col] = np.NaN
+                _df_pred.loc[idx,error_col] = errors
+                
+                # metrics
+                rmse_test = np.NaN
+                mae_test= np.NaN
+                metrics[ypred_col] = {"RMSE":rmse_test, "MAE":mae_test}
+                
+                # confidence intervals
+                _df_pred[ypred_lower] = np.NaN
+                _df_pred[ypred_upper] = np.NaN
+                
+        # predict=True
+        # package up predictions with indexes       
+        if predict == True:
+            idx = index_pred # set idx 
+            if debug == True: 
+                print("sliding_forecast: predict, index_pred =",index_pred)
+            _df_pred[ypred_col] = np.nan
+            _df_pred = pd.DataFrame(_y_pred_values, index = idx, columns=[ypred_col])
+            
+        # join predictions from each target _y 
+        #  to wide df_pred frame
+        # fit or predict == True    
         df_pred = df_pred.join(_df_pred) if n!=0 else _df_pred
-
-    return dfXYfc, df_pred, metrics, m, history_i, history_t, model_fit    ### sliding_forecast ###
-
-
+        
+    if fit == True:
+        return dfXY, df_pred, metrics, m, history_i, history_t, m_fit, scaler, make_derived_attributes, make_lags, ci
+    
+    if predict == True:
+        return df_pred
+        
+        ### end sliding_forecast
+        
 class sforecast:
     """Sliding window forecast model.
     
@@ -683,25 +1688,27 @@ class sforecast:
             
             model_type (str): indicates the type of model, "sk" (Sklearn), "cm" (statsmodel), or "tf" (TensorFlow).
             
-            win_parameters (dictionary): Dictionary of sliding/expanding window forecast model hyperparameters. Defaults to "None".
-            
-                Nobserve (int): number of observations to include in the training data (counting back from the first prediction). Defaults to None (unspecified), expandng window.
-            
+            swin_parameters (dictionary): Dictionary of sliding/expanding window forecast model hyperparameters. Defaults to "None".
+                        
                 Nlags (int): Add a lagged variable to the training from 1 to Nlags . Lagged variables enable accounting for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
             
                 covars (list):  List of co-variate variables. If not already present, the y forecast variable(s) will be added to this co_vars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values >0 and <= Nlags are included in the training variables. Defaults to None.
                 
                 catvars (list):  List of categorical variables, only relevant for TensorFlow models. Default = None.
                 
-                exogvars (list):  List of exogenous (and continuous) variables. Note, exogenous categorical variables are contained in cat_vars, not in exog_vars, though they are both a type of exogenous variable. Default = None. For the case of TensorFlow models, exog_vars are processed differently than covariate lagged variables. For example, exog_vars could be input to a dense network, while covariates could be input to an LSTM network. Use of exog_vars is optional. For example, if all continuous variables (e.g., exog_vars, and covariable lags) are input to a dense network, then there is no need to specifically identify the exog_vars.
+                exenvars (list):  List of exogenous (e.g., input variables) and enodogenous (e.g., derived variables), continuous, variables. Note that categorical variables are contained in catvars, not in exenvars.
+                During the prediction phase, exenvars must be input (see predict function, below) so that they can be combined with other attribures and used as input to the prediction/forecast.
+                Default is None. exenvars can be a list of lists, in which case it represents groups of variables that can be processed differently, for example by the TensorFlow model. 
+                For example, a TensorFlow models can process exenvars with a dense feed forward network and covariate lagged variables in an LSTM. Use of exenvars is optional. 
+                If all continuous variables (e.g., exenvars, and covariable lags) are input to a dense network, or other model (SkLearn model), then there is no need to specify the exenvars.
             
-                Npred (int): number of predictions to make. Defaults to 1. 
+                Ntest (int): number of predictions to make. Defaults to 1. 
                 
                 alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
             
                 Nhorizon (int):  n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1. Defaults to 1
             
-                i_start (int):  The first prediction where i corresponds the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Npred + 1. Defaults to None.
+                i_start (int):  The first prediction where i corresponds the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Ntest + 1. Defaults to None.
                 
                 minmax (tuple): d;lsfasd;fjla;
             
@@ -717,13 +1724,11 @@ class sforecast:
                     
                     * "tdistribution" - compute the t-distribution confidence interval  
                     
-            tf_parameters (dictionary): adfjslfl
-            
-                fsdf;sj
-                
-                al;fjs;lfslfd
-                
-                a;lfjsdlfjl
+            tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
+                * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
+                * Nepochs_t: Numbre of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
+                * batch_size: Defaults to 32
+                * lstm: defaults to False
                 
             cm_params (dictionary): dsfdsfa
             
@@ -771,15 +1776,14 @@ class sforecast:
             
                 stepwise: autoarima. Defaults True, stepwise search
             
-            xscale (dictionary): input variables are scaled as designated by the parameters in the dictionary.
+            scale_parameters (dictionary): input variables are scaled as designated by the parameters in the dictionary.
             
-                mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If xscale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = list of columns, then the corresponding columns are scaled with the MinMax scaler.
+                mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If scale_params["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = list of columns, then the corresponding columns are scaled with the MinMax scaler.
                 
-                ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale["ss_cols"] = list of columns, then the corresponding columns are scaled with StandardScaler.
+                ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscal_params["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale_params["ss_cols"] = list of columns, then the corresponding columns are scaled with StandardScaler.
             
             minmax (2-tuple): forecassts predictions and ci (confidence intervals) are constrained to fall between minmax[0] and minmax[1], given the corresponding min or max is != None. Defaults to (None, None).
         
-    
     **State Variables**
     
         metrics (dictionary of dictionaries):  {y (key): {MSE: number} , {MAE: number} , ... }
@@ -795,27 +1799,31 @@ class sforecast:
         df_pred (DataFrame): Dataframe containing the prediciton results. See sforecast.forecast() for additional information.
 
     """
-    def __init__(self,  y:list, model:None, model_type:None, xscale = None, tswin_parameters=None, tf_parameters=None, cm_parameters=None) -> None:
+    def __init__(self,  y:list, model:None, model_type:None, xscale_parameters = None, 
+                 swin_parameters=None, tf_parameters=None, cm_parameters=None, scale_parameters=None, verbose = False, debug = False) -> None:
   
         # initialize sliding window parameters
-        self.tswin_params = {
+        self.swin_params = {
             "covars": None,
             "catvars":None,
-            "exogvars":None,
-            "Nobserve":None,
-            "Npred":1,
+            "exogvars": None, # exogvars not includng derived variables
+            "derived_attributes": None,
+            "exenvars":None, # list of exogenous + engogenous (derived variables)
+            "Ntest":1,
             "Nlags":1,
             "Nhorizon":1,
-            "i_start":None,
             "idx_start":None,
             "alpha":0.2,
             "ci_method":"linear",
-            "minmax":(None,None)
+            "minmax":(None,None),
+            "horizon_predict_method":"single_step", # single_step, multi_step
+            "derived_attributes_transform":None
         }
         
-        self.xscale = {
+        self.scale_params = {
             "mms_cols":"all",
-            "ss_cols":None
+            "ss_cols":None,
+            "scaler":None,
         }
         
         self.tf_params = {
@@ -826,7 +1834,7 @@ class sforecast:
         }
         
         self.cm_params = {
-            "model":"arima", # arima or saramiax
+            "model":"arima", # arima ,  saramiax, auto_arima
             "order":(1,1,1), # arima and saramiax
             "seasonal_order":(0, 0, 0, 0), # sarimax
             "enforce_stationarity":True, # sarimax
@@ -853,33 +1861,143 @@ class sforecast:
             "stepwise": True # auto_arima, stepwise search
         }
         
-        self.y = y
-        self.ml_model = model
-        self.ml_model_type = model_type
-        self.history_i=None
-        self.history_t=None
+        self.predict_params = {
+            "index":None,
+            "dfexogs": None,
+            "Nperiods": 1,
+            "make_lags": None,
+            "make_derived_attributes":None
+            }
         
-        self.model = model
-        
-        if tswin_parameters != None:
-            for k in tswin_parameters:
-                assert self.tswin_params.__contains__(k), f'tswin_parameters, {k}, is not valid'
-                self.tswin_params[k] = tswin_parameters[k]
+        # sliding winddow parameters
+        if swin_parameters != None:
+            for k in swin_parameters:
+                assert self.swin_params.__contains__(k), f'swin_parameters, {k}, is not valid'
+                self.swin_params[k] = swin_parameters[k]
                 
+        if self.swin_params["Nhorizon"] == 1:
+            assert self.swin_params["horizon_predict_method"] == "single_step" , f'horizon_predict_method = {self.swin_params["horizon_predict_method"]} not valid.Only horizon_predict_method = "single_step" is allowed when Nhorizon = 1'
+        
+        # y and covars
+        # ensure y is iterable/list
+        # ensure y is in covars and covars is iterable
+        y = [y] if isinstance(y,str) else y
+        if self.swin_params["covars"] == None: 
+            self.swin_params["covars"]  = []
+        self.swin_params["covars"] = [self.swin_params["covars"]] if isinstance(self.swin_params["covars"],str) else self.swin_params["covars"]
+        for _y in  y: 
+            if _y not in self.swin_params["covars"]: self.swin_params["covars"].append(_y)
+            
+        Nhorizon = self.swin_params["Nhorizon"]
+        if self.swin_params["horizon_predict_method"] == "multi_step":
+            assert Nhorizon > 1, f'Norizon = {Nhorizon} not valid. Norizon must be > 1 when horizon_predice_method = multi_step'
+            
+        ### Min Max ####   
+        # ensure minmax is iterable ... 
+        # same length as y ... 
+        # if there is only one minmax pair then duplicate
+        minmax=self.swin_params["minmax"]
+        if isinstance(minmax,tuple): minmax = [minmax]
+        _minmax = minmax.copy()
+        _minmax = len(y)*_minmax if (len(_minmax) != len(y)) and (len(_minmax)==1) else _minmax
+        assert len(_minmax) == len(y), f'length of minmax tuples = {len(minmax)}, must equal the number of y targets'
+        self.swin_params["minmax"] = _minmax # replace the original minmax with the iterable minmax
+            
+        self.y = y                      # list of target variables or string name of target variable
+        
+        # model 
+        #  for cm or sk ... each covar has a model ... tf one model generates all covars
+        #     Nhorizon > 1 each time period within a horizon has a model
+        #     at minimum covars contains y ... length of 1
+        covars = self.swin_params["covars"]
+        if ( model_type == "cm" or model_type == "sk") and (len(covars) > 1 or len(y) > 1): # cm len(y) can be greater than 1 w/o covars
+            self.model = {} # default model is a dictionary
+            for cv in covars: 
+                self.model[cv] = model # clone the model in test_train_predict so copy by reference here
+        else: # only one y or tf
+            self.model = model
+
+        # confidence interval dictionary 
+        # confidence range for each y target, and time horizon from 1 to Nhorizion, {y1:[], y2:[], ...}
+        # these confidences are estimated/measured during the fit process
+        self.ci = {}
+        
+        self.model_type = model_type    # type of forecast model ... cm, sk, tf
+        self.history_i=None             # TensorFlow training history
+        self.history_t=None             # TensorFlow tunning for last tunning/training cycle
+        self.idx_last_obs = None        # last observation index
+        self.dfXYlast = None           # last observation
+        self.metrics = None             # rmse and mae for each y prediction
+        self.ci  = None                 # ci upper lower
+
+        # Nhorizon        
+        assert self.swin_params["Nhorizon"] >= 1, f'Nhorizon must be >= 1'
+          
+        # ensure exenvars is iterable 
+        if self.swin_params["exenvars"] != None:
+            self.swin_params["exenvars"] = [self.swin_params["exenvars"]] if isinstance(self.swin_params["exenvars"],str) else self.swin_params["exenvars"]
+          
+        # ensure exogvars is iterable 
+        if self.swin_params["exogvars"] != None:
+            self.swin_params["exogvars"] = [self.swin_params["exogvars"]] if isinstance(self.swin_params["exogvars"],str) else self.swin_params["exogvars"]
+        
+        # derived attribute names
+        derived_attribute_names =  self.swin_params["derived_attributes_transform"]().get_derived_attribute_names() if self.swin_params["derived_attributes_transform"] != None else None
+        self.swin_params["derived_attributes"] = derived_attribute_names
+        
+        if verbose or debug == True:
+            print('sforecast.init: self.swin_params["derived_attributes] =', derived_attribute_names)
+        
+        # Exenvars
+        # create exenvars if it doesnt already exist
+        if self.swin_params["exenvars"] == None: # exenvars is None ... create it     
+            if self.swin_params["exogvars"] == None:
+                self.swin_params["exenvars"] = derived_attribute_names 
+                
+            else: # exogvars != None ... exenvars = [exogvars] + [derived_attribues]
+                self.swin_params["exenvars"] = self.swin_params["exogvars"] if derived_attribute_names == None else self.swin_params["exogvars"] + derived_attribute_names
+                
+        # ensure exogenous and endogenous variables are in exenvars
+        # ... above ensure exenvars exists if it is needed
+        exenvars = self.swin_params["exenvars"]
+        if self.swin_params["exenvars"] != None:
+             #  first flatten exenvars
+            exenvars_flat = [ex for exen in exenvars for ex in exen] if not isinstance(exenvars[0],str)  else exenvars  
+            
+             # ensure exogenous variables are in exenvars
+            if self.swin_params["exogvars"] != None:
+                for exog in self.swin_params["exogvars"]:
+                    assert exog in exenvars_flat, f'exogvars variable {exog} is not in exenvars = {self.swin_params["exenvars"]}. exenvars must contain all exogenous variables ("exogvars") and endogenous variables "(derived variables)"'
+            
+            # ensure endogenous/derived variables are in exenvars
+            if derived_attribute_names != None:
+                for endog in derived_attribute_names:
+                    assert endog in exenvars_flat, f'derived attributes variable {endog} is not in exenvars = {self.swin_params["exenvars"]}. exenvars must contain all endogenous  variables ("exogvars") and and endogenous variables "(derived variables)"'
+           
+        # exenvars
+        if verbose or debug == True:
+            print('sforecast.init: self.swin_params["exenvars"] = ', self.swin_params["exenvars"])
+        
+        assert self.swin_params["Ntest"] >= 0, f'Ntest = {self.swin["Ntest"]}, must be >= 0'
+                
+        # tensorflow parameters   ... nepochs_i, nepochs_t,      
         if tf_parameters != None:
             for k in tf_parameters:
                 assert self.tf_params.__contains__(k), f'tf_parameters, {k}, is not valid'
                 self.tf_params[k] = tf_parameters[k]
-                
+        
+        # classic model paramters        
         if cm_parameters != None:
             for k in cm_parameters:
                 assert self.cm_params.__contains__(k), f'cm_parameters, {k}, is not valid'
                 self.cm_params[k] = cm_parameters[k]
+            assert self.cm_params["model"] == "arima" or self.cm_params["model"] == "sarimax" or self.cm_params["model"] == "auto_arima", f'model = {self.cm_params["model"]} not valid. Valid models are "arima", "sarimax", "auto_arima"'
         
-        if xscale != None:
-            for k in xscale:
-                assert self.xscale.__contains__(k), f'xscale parameter = {k} is not valid'
-                self.xscale[k] = xscale[k]
+        # scale variable parameters ... normalize, standardize
+        if scale_parameters != None:
+            for k in scale_parameters:
+                assert self.scale_params.__contains__(k), f'x_scale parameter = {k} is not valid'
+                self.scale_params[k] = scale_parameters[k]
 
         assert model_type != "None" , f'model_type = {model_type} is not defined, model_type must be defined'
 
@@ -887,24 +2005,16 @@ class sforecast:
 
         assert self.y != None, f'y forecast variable(s) not specified'
         
-        if model_type == "cm" and  self.cm_params["model"] == "arima":
-            assert self.tswin_params["Nhorizon"]==1, f'Nhorizon is set to {self.tf_params.tswin_params["Nhorizon"]}, ARIMA model suports forecast horizon of 1, Nhorizon = 1'
+        #assert self.swin_params["Ntest"] % self.swin_params["Nhorizon"] == 0, f'Ntest = {self.swin_params["Ntest"]} is not evenly divisable by Nhorizon = {self.swin_params["Nhorizon"]}'
         
-        if model_type != "cm":
-            assert self.ml_model != None, f'model cannot be {model}, ML model must be defined if model_type = "sk" or model_type = "tf" '
-        
-        assert self.ml_model_type == "sk" or self.ml_model_type == "tf" or self.ml_model_type =="cm", f'model type = {self.ml_model_type}, ml_model_type = "tf" or "sf" or "cm" is valid'
-        
-        if model_type == "cm" and (self.cm_params["model"]=="arima" or self.cm_params["model"]=="sarimax"):
+        if model_type == "cm" and (self.cm_params["model"]=="arima" or self.cm_params["model"]=="sarimax" ) :
+            assert self.swin_params["Nhorizon"]==1, f'Nhorizon > 1 not supported for model_type = arima or sarimax'    
             
-            assert self.tswin_params["Nhorizon"]==1, f'if model_type = "cm" and model = "arima" or "sarimax",  Nhorizon must be = 1'
-             
-            if not isinstance(self.y,str):
-                assert len(y) == 1, f'y = {y}, not valid. Only one target variable is supported with model_type = {model_type}'  
+        if model_type == "cm" and (self.cm_params["model"]=="auto_arima" and self.swin_params["derived_attributes_transform"] != None ) :
+            assert self.swin_params["Nhorizon"]==1, f'Nhorizon > 1 not supported for model_type = auto_arima and derived attributes (exogenous variables) != None'
                 
-
-    def forecast(self, dfXY, verbose=False):
-        """ML training (on training window) and predictions ("forecast") over the horizon (1 or more observation rows)
+    def fit(self, dfXY, verbose=False, debug=False):
+        """ML training (on training window) and predictions ("forecast") over the horizon (1 or more observation rows). The forecast uses past observations (training set) to fit the model, then predicts forward and compares the predictions to the actual observations (test set).
 
         Args:
             dfXY (DataFrame): input DataFrame containing X training variables (exogenous) and Y covariates.
@@ -923,25 +2033,112 @@ class sforecast:
         assert isinstance(dfXY, pd.DataFrame)
 
         if isinstance(self.y,str):
-            assert self.y in dfXY.columns, f' "{self.y}" column is not contained in the input DataFrame'
+            assert self.y in dfXY.columns, f' y = {self.y} column is not contained in the input DataFrame'
         else:
             for _y in self.y:
                 assert _y in dfXY.columns, f' "{_y}" column is not contained in the input DataFrame'
             
-
- 
-        self.dfXYfc, self.df_pred, self.metrics, self.model, self.history_i, self.history_t, self.model_fit = sliding_forecast(dfXY, y = self.y, 
-                    model=self.ml_model, model_type=self.ml_model_type, 
-                    tf_params=self.tf_params, cm_params = self.cm_params,
-                    covars=self.tswin_params["covars"], catvars=self.tswin_params["catvars"], 
-                    exogvars=self.tswin_params["exogvars"], minmax=self.tswin_params["minmax"],
-                    Nlags=self.tswin_params["Nlags"], Nobserve=self.tswin_params["Nobserve"],
-                    Npred = self.tswin_params["Npred"],  Nhorizon=self.tswin_params["Nhorizon"], 
-                    i_start = self.tswin_params["i_start"], idx_start=self.tswin_params["idx_start"],
-                    alpha = self.tswin_params["alpha"],ci_method= self.tswin_params["ci_method"],
-                    mms_cols = self.xscale["mms_cols"], ss_cols = self.xscale["ss_cols"],
-                    verbose = False)
+        dfXYfit, self.df_pred, self.metrics, self.model, self.history_i, self.history_t, self.model_fit, \
+                    self.predict_params["scaler"], make_derived_attributes, make_lags, self.ci = \
+                    sliding_forecast(dfXY, y = self.y, fit = True,
+                        model=self.model, model_type=self.model_type, 
+                        swin_params = self.swin_params, 
+                        cm_params = self.cm_params,
+                        tf_params=self.tf_params, 
+                        scale_params = self.scale_params,
+                        verbose = verbose, debug=debug)
+         
+        self.predict_params["make_derived_attributes"] = make_derived_attributes
         
- 
+        self.predict_params["make_lags"] = make_lags
+            
+        if (self.model_type == "cm") and (self.cm_params["model"] != "auto_arima"):
+            self.model = self.model_fit 
+   
+        if debug == True:
+            print("sforecast.fit: make_lags =",make_lags)
+        
+        self.idx_last_obs = dfXYfit.tail(1).index[0]
+        self.dfXYlast = dfXYfit.loc[self.idx_last_obs].copy()
+        
         return self.df_pred
     
+    def predict(self, Nperiods=1, dfexogs=None, dfcats=None, ts_period = None, verbose=False, debug=False):
+        """Nperiod forecast next N_periods based on the model trainded during the fit operation. 
+        
+        Args:
+            Nhorizon (int): Indicates how many periods forward to forecast. Defaults to 1. 
+            dfexog (DataFrame, optional): Defaults to None. If the input (training) dataframes include exogenous variables (independent variables, not derived variables), then a dfexog input dataframe is required for prediction. The number of rows of dfexog must be equal to Nhorizon.
+            ts_period (pandas time offset, optional): Defaults to None. Required if the time-series index is a timestamp. The output forecast index will be successive timestamps with period ts_period.
+            verbose (bool, optional): Print helpful information to standard out when True. Defaults to False.
+
+        Returns:
+            Dataframe: Output forecast for each target variable.
+        """
+        if not isinstance(dfexogs,pd.DataFrame):
+            if dfexogs != None: assert isinstance(dfexogs, pd.DataFrame) , "dfexogs input must be a Pandas DataFrame"
+        else:
+            self.predict_params["dfexogs"]=dfexogs
+  
+        # index
+        idx_last_obs = self.idx_last_obs # last observation index
+        index = None
+        Nhorizon = self.swin_params["Nhorizon"]
+        if isinstance(idx_last_obs,np.int64) or isinstance(idx_last_obs,int): # if index is integer then just add 1 to each successive index
+            index = [np.arange(idx_last_obs + 1 ,idx_last_obs + Nhorizon + 1 ,1)]           
+        else:  # index not int, assume it is datetime
+            index = [pd.Timestamp(idx_last_obs)+ i*ts_period for i in range(1,Nperiods+1) ] if ts_period != None else None
+                
+        # Unclear index
+        assert index != None, f'Unable to interpret prediction index. Specify ts_period (pandas offset) when dfXY period is timestamp.'
+        
+        self.predict_params["index"]=index
+        
+        # Nperiods
+        Nhorizon = self.swin_params["Nhorizon"]
+        if self.swin_params["Nhorizon"] > 1 and self.swin_params["horizon_predict_method"]=="multi_step":
+            assert Nperiods <= Nhorizon , f'Nperiods = {Nperiods}, When "horizon_predict_method == "multi_step", Nperiods must be <= Nhorizon = {self.swin_params["Nhorizon"]}'
+        if self.model_type == "cm" and ( self.cm_params["model"] == "arima" or self.cm_params["model"] == "sarimax"):
+            assert Nperiods == 1 , f'Nperiods = {Nperiods} not supported. Nperiods must equal 1 for arima and sarimax'
+        if  self.model_type == "cm" and self.cm_params["model"] == "auto_arima" and not self.swin_params["derived_attributes_transform"] == None:
+            assert Nperiods == 1 , f'Nperiods = {Nperiods} not supported. Nperiods must equal 1 for auto_arima with derived/edogenous variables'
+        self.predict_params["Nperiods"]=Nperiods
+        
+        
+        # dfexogs
+        #   ... ensure enough exogs are input
+        if isinstance(dfexogs, pd.DataFrame):
+            assert self.swin_params["exogvars"] != None, f'Invalid input. dfexogs not allowed if swin_params exogvars == None'
+            assert list(dfexogs.columns) == self.swin_params["exogvars"] , f'dfexogs columns {list(dfexogs.columns)} must match (names and order) swin_params exogvars = {self.swin_params["exogvars"]}'
+            assert dfexogs.index.size >= Nperiods, f'dfexogs number of rows = {dfexogs.index.size} is invalid. dfexogs must contain at least Nperiod = {Nperiods} rows'
+  
+        # dfcats
+        #  ... tf may use catvars for categorical embeddings
+        #  ... ensure the corrent number of catvars entered
+
+        if isinstance(dfcats, pd.DataFrame):
+            assert self.model_type == "tf" , f'dfcats only requred for model_type = "tf"'
+            assert self.swin_params["catvars"] != None, f'Invalid input. dfcats not allowed if swin_params catvars == None'
+            assert list(dfcats.columns) == self.swin_params["catvars"] , f'dfcats columns {dfcats.columns} must match (names and order) to swin_params catvars = {self.swin_params["catvars"]}'
+            assert dfcats.index.size >= Nperiods , f'dfcats number of rows = {dfcats.index.size} is invalid. dfcats must contain at least Nperiod = {Nperiods} rows'
+            self.predict_params["dfcats"]=dfcats
+        else:
+            assert dfcats == None, f'dfcats = {dfcats} not valid. A dfcats dataframe is input only for a TensorFlow model with categorical embeddings.'
+  
+        if debug == True: 
+            print("sf_forecast: predict: idx_last_obs =",idx_last_obs)
+            print("sf_forecast.predict: index =",index)
+        
+        self.predict_params["sf_forecast.predict: index"] = index
+        self.predict_params["sf_forecast.predict: Nhorizon"] = Nhorizon
+        
+        predict_params = copy.deepcopy(self.predict_params)  # need to do deepcopy or transforms, e.g., lags will produce different forecast for successive calls
+        
+        df_pred = sliding_forecast(self.dfXYlast, y = self.y,  predict=True, fit=False,
+                        model=self.model, model_type=self.model_type, 
+                        swin_params = self.swin_params, cm_params = self.cm_params,
+                        tf_params=self.tf_params, scale_params = self.scale_params,
+                        predict_params = predict_params, verbose = verbose, debug=debug)
+                        
+        return df_pred
+        
