@@ -1,6 +1,6 @@
 # sforecast
 
-A framework for running forecasting models within a sliding (expanding) window out-of-sample  fit (train/test) and prediction (forecasts). The package includes support of classical forecasting models, SK Learn supervised learning ML models, and TensorFlow deep learning models."
+A framework for running forecasting models within a sliding (expanding) window out-of-sample fit (train/test) and prediction (forecasts). The package includes support of classical forecasting models, SK Learn ML models, and TensorFlow deep learning models.
 
 ## Installation
 
