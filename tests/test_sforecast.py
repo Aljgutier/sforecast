@@ -549,7 +549,6 @@ def test_multivariate_categoricao_singlout():
         "minmax" :(0,None),
         "covars":covars,
         "catvars":le_catvars
-
         }  
 
     tf_params = {

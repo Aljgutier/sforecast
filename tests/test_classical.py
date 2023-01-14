@@ -1,7 +1,6 @@
 import beautifulplots as bp
 import pandas as pd
 import sforecast as sf
-from xgboost import XGBRegressor
 import numpy as np
 from datetime import datetime
 
