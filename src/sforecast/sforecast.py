@@ -1311,7 +1311,6 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                         if fit == True:
                             _pred_idx = [i + k + Nclip ]  # iloc index (ith)
                             y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx    
-
                         
                     if predict == True:
                         _pred_idx = [index_pred[predict_cnt]]
