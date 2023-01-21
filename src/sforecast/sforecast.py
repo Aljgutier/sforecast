@@ -768,7 +768,10 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                  # dfXlags 
                  # ... exenvars not yet removed fro dfXlags_train 
                  # 
-                dfXlags_train = dfX_train # .drop(catvars, axis =1) if catvars != None else dfXconts_train
+                dfXlags_train = dfX_train 
+                
+                
+                
                 Xlags_train = dfXlags_train.values
                 if debug == True:
                     exen_str = "with exenvars" if exenvars !=None else ""
@@ -828,15 +831,24 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                 X_train =  [ Xlags_train.reshape(Xlags_train.shape[0], Nlags, Ncovars) ] if tf_params["lstm"] == True else [Xlags_train]
                 if exenvars != None and catvars != None: 
                     if not isinstance(exenvars[0],str):
-                        for Xexen_t in Xexen_train: X_train = X_train + [Xexen_t] 
-                        X_train = X_train + Xcats_train_list if catvars != None else X_train
-                    else:
-                        if tf_params["lstm"] == True: 
-                            X_train = X_train + [Xexen_train] +  Xcats_train_list  if catvars != None else X_train 
+                        if Nlags > 0:
+                            for Xexen_t in Xexen_train: X_train = X_train + [Xexen_t]
                         else:
+                            X_train =  []
+                            for Xexen_t in Xexen_train: X_train = X_train + [Xexen_t]
+                        X_train = X_train + Xcats_train_list if catvars != None else X_train
+
+                    else: # exenvars is list of strings
+                        if tf_params["lstm"] == True: 
+                            if Nlags > 0:
+                                X_train = X_train + [Xexen_train] +  Xcats_train_list  if catvars != None else X_train 
+                            else:
+                                X_train = [Xexen_train] +  Xcats_train_list  if catvars != None else X_train 
+                            
+                        else: # exenvars inside of X_train
                             X_train = X_train +  Xcats_train_list
                 elif exenvars == None and catvars != None:
-                    X_train = X_train + Xcats_train_list            
+                    X_train = X_train + Xcats_train_list          
                 else:
                     X_train = X_train # this is the default ... exenvars == None catvars == None
                 
@@ -850,7 +862,6 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                         print(f'test_train_predict: tf initial fit, i = {i}')
                         print("Nepochs_i =",tf_params["Nepochs_i"])
                         #print(f'test_train_predict: X_train = {X_train}')
-                    
                     
                     m=model # set a pointer to the model ... do not clone ...cloning will require compiling and implementng redundent TF logic ... dont do that outside of sforecast
                                         
@@ -1024,11 +1035,19 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                         X_pred = [ Xlags_pred.reshape(1, Nlags, Ncovars)] if tf_params["lstm"] == True else [Xlags_pred] # Xlags_pred.shape[0]
                         if exenvars != None:
                             if not isinstance(exenvars[0],str):
-                                for Xexen_p in Xexen_pred:  X_pred = X_pred + [Xexen_p] 
+                                if Nlags > 0:
+                                    for Xexen_p in Xexen_pred:  X_pred = X_pred + [Xexen_p] 
+                                else:
+                                    X_pred = []
+                                    for Xexen_p in Xexen_pred:  X_pred = X_pred + [Xexen_p] 
+                                    
                                 X_pred = X_pred +  Xcats_pred_list  if catvars != None else X_pred
                             else:  
                                 if tf_params["lstm"] == True:
-                                    X_pred = X_pred +[ Xexen_pred ] + Xcats_pred_list  if catvars != None else X_pred
+                                    if Nlags >0:
+                                        X_pred = X_pred +[ Xexen_pred ] + Xcats_pred_list  if catvars != None else X_pred
+                                    else:
+                                        X_pred = [ Xexen_pred ] + Xcats_pred_list  if catvars != None else X_pred
                                 else:
                                     X_pred = X_pred + Xcats_pred_list  if catvars != None else X_pred
                         elif exenvars == None and catvars != None:
