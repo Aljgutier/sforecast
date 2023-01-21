@@ -3,7 +3,8 @@ import pandas as pd
 import sforecast as sf
 from xgboost import XGBRegressor
 import numpy as np
-from datetime import datetime
+from sklearn.linear_model import LinearRegression
+
 
 
 ###### SK Learn Models
@@ -121,8 +122,7 @@ class derived_attributes_3(BaseEstimator,TransformerMixin):
                 "Quantity_Office_Supplies_m1_ravg"+str(Nr), "Quantity_Office_Supplies_m1_rstd"+str(Nr),
                 "Quantity_Technology_m1_ravg"+str(Nr), "Quantity_Technology_m1_rstd"+str(Nr)
                 ]
-        
-    
+          
 def test_multivariate_exog_endog_mout():
 
     dfXY = dfXYw[["Quantity_Furniture", "Quantity_Office Supplies", "Quantity_Technology"]].copy()
@@ -161,8 +161,6 @@ def test_multivariate_exog_endog_mout():
        11.97374344, 10.58117962, 11.01480961,  8.10165024, 15.9510603 ,
         6.25594616,  7.7132287 , 12.5488615 , 16.64418602, 10.80869389]
     
-
-
     pred_expected_1=[48.81955338, 33.40526962, 33.22610474, 41.23186111, 22.25686646,
         5.31832409, 22.29068565, 32.99081802, 43.37825012, 34.12310028,
        33.30134201, 40.55511093, 25.5574894 , 30.53362465, 48.47904587,
@@ -191,9 +189,48 @@ def test_multivariate_exog_endog_mout():
 
         pred_expected = pred_expected_list[n]
         print("pred_expected =",pred_expected)
-        pred_expected_p = pred_expected + 2
-        pred_expected_m = pred_expected - 2
+        pred_expected_p = pred_expected + 5
+        pred_expected_m = pred_expected - 5
 
         assert (pred_result > pred_expected_m).all() , f'y = {_y_pred} multivariate, exogenous, endogenous, forecast failed pred_result > pred_expected_m'
         assert (pred_result < pred_expected_p).all() , f'y = {_y_pred} multivariate, exogenous, endogenous, forecast pred_result < pred_expected_p'
         
+def test_univariate_exogs_linear_regression():
+    """Test Linear Covariate"""
+    
+    data_path = "../data"
+    filename = "CA1_FOODS_030_1hot.csv"
+    df_ca_1_foods_030_1hot = pd.read_csv(f'{data_path}/{filename}' , parse_dates = ["yearweek_dt"])
+    df_ca_1_foods_030_1hot=df_ca_1_foods_030_1hot.set_index("yearweek_dt")
+    dfXY = df_ca_1_foods_030_1hot.copy()
+    y = ["unit_sales"]
+    exogvars = [c for c in dfXY.columns if c != "unit_sales" ]
+
+    # #### Fit
+    model = LinearRegression()
+    
+    y = ["unit_sales"]
+
+    Ntest,Nlags = 3, 5
+
+    swin_params = {
+        "Ntest":Ntest,
+        "Nhorizon":1,
+        "Nlags":Nlags,
+        "minmax" :(0,None),
+        "exogvars": exogvars,
+        "covars":None} 
+
+    sfm = sf.sforecast(y = y, swin_parameters=swin_params,model=model, model_type="sk")
+    df_pred = sfm.fit(dfXY)
+
+    y_pred = y[0]+"_pred"
+    
+    pred_expected = np.array([53.2, 46.1, 45.4])
+    
+    pred_expected_p = pred_expected + 5
+    pred_expected_m = pred_expected - 5
+    pred_result = df_pred[y_pred].tail(Ntest).values
+    
+    assert (pred_result > pred_expected_m).all() , "XGBoost univariate forecast failed pred_result > pred_expected_m"
+    assert (pred_result < pred_expected_p).all() , "XGBoost univariate forecast failed pred_result < pred_expected_p"

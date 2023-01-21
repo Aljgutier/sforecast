@@ -5,6 +5,7 @@ from scipy.stats import t
 from sklearn.base import clone
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin
+import warnings
 import numpy as np
 import pandas as pd
 import copy
@@ -376,6 +377,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
     idx_start = swin_params["idx_start"]
     horizon_predict_method = swin_params["horizon_predict_method"]
     derived_attributes_transform = swin_params["derived_attributes_transform"]
+    derived_attributes = swin_params["derived_attributes"]
     Ndclip = derived_attributes_transform().get_Nclip() if derived_attributes_transform != None else 0
     
     # flat exenvars
@@ -496,6 +498,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
         predict_cnt = 0
     
     ####### LOOP ... train/test/predict  #########
+    dfXY_train = None
     outer_loop_break = False
     for i in np.arange(i_loop_first, i_loop_last + 1, N_loop_step):  # +1 so last i will be i_loop_last
         
@@ -529,9 +532,9 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                 else:
                     dfXY_train=make_lags.fit_transform(dfXY_train)
 
-            # dfX_train ... after make lags or dfXY and dfX will be inconssistent
+            # dfX_train ... after make lags 
             dfX_train = dfXY_train.drop(covars,axis=1)
-
+            
             #### Derived Variables
             # dfXexen
             #   ouput of derived variables contains 
@@ -542,6 +545,8 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
             if derived:
                 make_derived_attributes = derived_attributes_transform()
                 dfX_train = make_derived_attributes.fit_transform(dfX_train) # dfXexen contains exogenous and endogenous (derived) variables
+                dfXY_train[derived_attributes]=dfX_train[derived_attributes].values # put derived attributes id dfXY for consistency
+                
                 
             if lags or derived:
                 #### delete NaN rows
@@ -560,8 +565,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                 dfXY_train = dfXY_train
                 dfY_train = dfY_train
                 dfX_train = dfX_train
-                
-                
+                      
             # Scale
             # do not scele cm models
             # tf scaled below
@@ -572,6 +576,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
             if  model_type == "sk" or model_type == "tf":
                 scaler=minmaxstd_scaler(mms_cols=mms_cols,ss_cols=ss_cols)
                 dfX_train = scaler.fit_transform(dfX_train)
+                dfXY_train = dfXY_train[covars].join(dfX_train) # add covars back to dfX_train to keep dfXY_train consistent
             
             if debug == True:
                 print("test_train_predict: dfX_train")
@@ -593,7 +598,6 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                 
             # dfXexen_train    
             dfXexen_train = dfX_train[exenvars_flat] if exenvars != None else None
-
 
             #######################
             ###### fit models #####
@@ -791,19 +795,23 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                 
                 # dfXexnvars lstm == True
                 if tf_params["lstm"] == True:
-                    if exenvars == None: Xexen_pred = None
                     if (exenvars != None):
                         dfXexen_train = dfXlags_train[exenvars_flat]
                         dfXlags_train = dfXlags_train.drop(exenvars_flat,axis=1)
                         Xlags_train = dfXlags_train.values
+                        
                         if not isinstance(exenvars[0],str):
                             Xexen_train = []
-                            for exen in (exenvars): Xexen_train = Xexen_train + [dfXexen_train[exen].values]
+                            for exen in (exenvars): 
+                                print("test_train_predict, exen =", exen)
+                                Xexen_train = Xexen_train + [dfXexen_train[exen].values]
                         else:
                             Xexen_train = dfXexen_train.values
                         if debug == True:
                             print(f'train_test_predict: exenvars Xexen_train')
                             print(Xexen_train)
+                    else:
+                        Xexen_pred = None
                             
                 if debug == True:
                     print(f'test_train_predict: tf fit, dfXlags_train')
@@ -823,7 +831,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                         for Xexen_t in Xexen_train: X_train = X_train + [Xexen_t] 
                         X_train = X_train + Xcats_train_list if catvars != None else X_train
                     else:
-                        if tf_params["lstm"] == True:
+                        if tf_params["lstm"] == True: 
                             X_train = X_train + [Xexen_train] +  Xcats_train_list  if catvars != None else X_train 
                         else:
                             X_train = X_train +  Xcats_train_list
@@ -842,6 +850,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                         print(f'test_train_predict: tf initial fit, i = {i}')
                         print("Nepochs_i =",tf_params["Nepochs_i"])
                         #print(f'test_train_predict: X_train = {X_train}')
+                    
                     
                     m=model # set a pointer to the model ... do not clone ...cloning will require compiling and implementng redundent TF logic ... dont do that outside of sforecast
                                         
@@ -877,10 +886,9 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                     #### X_test/pred  Xexen_test/red  
                     if model_type == "sk":   # sk X_test and predict
                         
-                        # emulate N-step forecast with k inner loop
+                        # N-step forecast with k inner loop
                         if debug == True:
                             print(f'  test_train_predict: sk, test, predict, {horizon_predict_method}  i =  {i} , k = {k}')                        
-
                         
                         if horizon_predict_method == "single_step" or k == 0:   # single_step any k or multi_step only when k == 0
                         
@@ -895,6 +903,8 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                                     make_lags.set_last_y(_cv,y_pred_nda[_cv][predict_cnt-1], debug=debug)
                             # lags
                             dfXY_pred = make_lags.transform(dfnewrows=dfXY_pred, Nout = 1, debug=debug)
+                            
+                            
                             dfX_pred = dfXY_pred.drop(covars,axis=1)
                             
                                                             
@@ -908,10 +918,12 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                             # derived attributes
                             if derived:
                                 dfX_pred = make_derived_attributes.transform(dfnewrows=dfX_pred,Nout=1 )
+                             
                                 
                             # scale
                             dfX_pred = scaler.transform(dfX_pred)
                             X_pred = dfX_pred.values
+
                                     
                         if debug == True:
                             print(f'  test_train_predict: sk test, predict {horizon_predict_method}, dfX_pred.tail()')
@@ -1239,8 +1251,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                                    
                         if fit == True:
                             _pred_idx = [i + k + Nclip ]  # iloc index (ith)
-                            y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx     
-                   
+                            y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx                       
                     
                     # save indexes to put back into original data frame ... adjust for Nclip ... externally there is no clip so add Nclip back to get the -th index correct                      
                     elif model_type == "cm" and cm_params["model"] == "auto_arima" and not derived:
@@ -1280,18 +1291,18 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                         if i == i_initial_pred and k == 0:
                             y_pred_nda = {}
                             if fit == True: y_test_nda = {}
-                            
+                                                
                         for n,_cv in enumerate(covars): # y_pred and  y_tests for each covar
                             if (i != i_initial_pred or k > 0 ):
                                 y_pred_nda[_cv] = np.append(y_pred_nda[_cv],np.array(y_pred[0,n]).reshape(1,1),axis=0) 
                                 if fit == True: 
                                     y_test_nda[_cv] = np.append(y_test_nda[_cv],np.array(y_test[0][n]).reshape(1,1),axis=0)
                             else:
+                                # first time assert that prediction is the same length as covars ... test occurs len(covar) times
+                                assert len(y_pred[0]) == len(covars), f'len(y_pred) = len(covars), predicted outputs must equal the number covariates.'
                                 y_pred_nda[_cv] = np.array(y_pred[0,n]).reshape(1,1)
                                 if fit == True: y_test_nda[_cv] = np.array(y_test[0][n]).reshape(1,1)
                             
-                        #y_pred_nda = np.append(y_pred_nda,y_pred,axis=0) if (i != i_initial_pred or k > 0 ) else y_pred 
-                        
                         if debug == True:
                             print(f'  test_train_predict: tf y_pred_nda = {y_pred_nda}')
                             if fit == True:
@@ -1301,6 +1312,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                             _pred_idx = [i + k + Nclip ]  # iloc index (ith)
                             y_pred_idx = _pred_idx if (i == i_initial_pred and k == 0 ) else y_pred_idx + _pred_idx    
 
+                        
                     if predict == True:
                         _pred_idx = [index_pred[predict_cnt]]
                         y_pred_idx = y_pred_idx + _pred_idx if (predict_cnt > 0) else  _pred_idx
@@ -1313,7 +1325,7 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                 # if not predicting then set test and pred variables to NaN
                     y_test_nda = None
                     y_pred_nda = None
-                    y_pred_idx = dfX.index[dfX.index.size - 1 ]
+                    #y_pred_idx = dfX.index[dfX.index.size - 1 ]
                     
                 if debug == True:
                     print(f' test_train_predict:  i = {i}, k = {k}, i_initial_pred = {i_initial_pred}')
@@ -1321,19 +1333,16 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
                     print("  test_train_predict: y_test_nda =",y_test_nda)
                     print("  test_train_predict: _pred_idx", _pred_idx)
                     print("  test_train_predict: y_pred_idx",y_pred_idx)
-
-                    
-            #print("test_train_predict: y_pred_nda =",y_pred_nda)
                 
     return_tuple = None 
     i_initial_pred = i_initial_pred + Nclip # adjust for the next level up, where Nclip was not removed from nitial rows
     
     if model_type == "cm":
-        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler
+        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler
     if model_type == "sk":
-        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m, i_initial_pred, make_derived_attributes, make_lags, scaler
+        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, i_initial_pred, make_derived_attributes, make_lags, scaler
     elif model_type =="tf":
-        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, m, history_i, history_t,i_initial_pred, make_derived_attributes, make_lags, scaler
+        return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, history_i, history_t,i_initial_pred, make_derived_attributes, make_lags, scaler
             
     return return_tuple  ### test_train_predict ###
 
@@ -1477,7 +1486,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
             print(f'sliding_forecast: tf,  y = {y}')
             print("sliding_forecast: tf, type(model_in) =",type(model))
 
-        y_pred_values, y_test_values, y_pred_idx, model_out, history_i, history_t, i_initial_pred, make_derived_attributes, make_lags, scaler = train_test_predict(dfXY, y, model, 
+        y_pred_values, y_test_values, y_pred_idx, dfXY_train, model_out, history_i, history_t, i_initial_pred, make_derived_attributes, make_lags, scaler = train_test_predict(dfXY, y, model, 
                     model_type=model_type, swin_params=swin_params,tf_params=tf_params,scale_params = scale_params,
                     fit=fit, predict=predict, pred_params=predict_params, verbose=verbose, debug=debug)
         
@@ -1508,7 +1517,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
             print(f'sliding_forecast: sk,  y = {y}')
             print("sliding_forecast: sk, type(model_in) =",type(model))
                     
-        y_pred_values, y_test_values, y_pred_idx, model_out, i_initial_pred, make_derived_attributes, make_lags, scaler  = train_test_predict(dfXY, y, model, 
+        y_pred_values, y_test_values, y_pred_idx, dfXY_train, model_out, i_initial_pred, make_derived_attributes, make_lags, scaler  = train_test_predict(dfXY, y, model, 
         model_type=model_type, swin_params=swin_params, cm_params=cm_params, tf_params=tf_params, scale_params = scale_params,
             fit = fit, predict=predict, pred_params=predict_params,verbose=verbose, debug=debug)
         
@@ -1546,7 +1555,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
                 
             model_in = model if len(y) == 1 else model[_y] # dict of models, one for every _y
             
-            _y_pred_values, _y_test_values, y_pred_idx, model_out, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler = train_test_predict(dfXY, _y, model_in, 
+            _y_pred_values, _y_test_values, y_pred_idx, dfXY_train, model_out, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler = train_test_predict(dfXY, _y, model_in, 
                     model_type=model_type, swin_params = swin_params, tf_params=tf_params, scale_params = scale_params,
                     cm_params=cm_params, fit = fit, predict=predict,
                     pred_params=predict_params, verbose=verbose, debug=debug )
@@ -1616,6 +1625,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
                     print("sliding_forecast: errors = ", errors)
                     print("sliding_forecast: idx = ", idx)
                 
+                
                 _df_pred[ytrain_col] = dfXY.iloc[i1_obs:i_initial_pred][_y] # y train
                 _df_pred[ytest_col] = dfXY.iloc[i_initial_pred:][_y] # y test
                 _df_pred[ypred_col] = np.nan
@@ -1624,9 +1634,9 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
                 _df_pred.loc[idx,error_col] = errors
                 
                 # metrics dictionary ... statistics
-                N = Ntest if Ntest > 0 else 1
+                #N = Ntest if Ntest > 0 else 1
                 
-                N = Ntest if Ntest > 0 else Ntest
+                #N = Ntest if Ntest > 0 else Ntest
                 y_test_array = dfXY[_y].iloc[i_initial_pred:i_initial_pred+Ntest]
                 y_pred_array = _df_pred.iloc[i_initial_pred:i_initial_pred+Ntest][ypred_col]
                          
@@ -1685,7 +1695,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         df_pred = df_pred.join(_df_pred) if n!=0 else _df_pred
         
     if fit == True:
-        return dfXY, df_pred, metrics, m, history_i, history_t, m_fit, scaler, make_derived_attributes, make_lags, ci
+        return dfXY_train, df_pred, metrics, m, history_i, history_t, m_fit, scaler, make_derived_attributes, make_lags, ci
     
     if predict == True:
         return df_pred
@@ -1834,7 +1844,8 @@ class sforecast:
             "ci_method":"linear",
             "minmax":(None,None),
             "horizon_predict_method":"single_step", # single_step, multi_step
-            "derived_attributes_transform":None
+            "derived_attributes_transform":None,
+            "derived_attributes":None
         }
         
         self.scale_params = {
@@ -1943,7 +1954,7 @@ class sforecast:
         self.history_i=None             # TensorFlow training history
         self.history_t=None             # TensorFlow tunning for last tunning/training cycle
         self.idx_last_obs = None        # last observation index
-        self.dfXYlast = None           # last observation
+        self.dfXYfit_last = None         # last observation for forcast ... scaled exogs, endogenous, and lags ... cats are not scaled
         self.metrics = None             # rmse and mae for each y prediction
         self.ci  = None                 # ci upper lower
 
@@ -2047,13 +2058,33 @@ class sforecast:
             y_upper:  upper confidence limit
         """
         
+        # dfXY
         assert isinstance(dfXY, pd.DataFrame)
-
+        assert dfXY.index.has_duplicates == False, f'dfXY has duplicate index entries. Duplcate indexes are not allowed'
+        
+        # y
         if isinstance(self.y,str):
             assert self.y in dfXY.columns, f' y = {self.y} column is not contained in the input DataFrame'
         else:
             for _y in self.y:
                 assert _y in dfXY.columns, f' "{_y}" column is not contained in the input DataFrame'
+               
+        # ensure all columns are either y, exogvars, covars, or catvars
+        cols = list(dfXY.drop(self.y, axis=1).columns)
+        exogvars = self.swin_params["exogvars"]
+        covars = self.swin_params["covars"]
+        catvars = self.swin_params["catvars"]
+        for c in cols:
+            if exogvars != None:
+                if catvars == None:
+                    assert c in exogvars or c in covars, f'dfXY column "{c}" is not specified as y, exogenous variable, covariate variable, or categorical variable.'
+                else:
+                    assert c in exogvars or c in covars or c in catvars, f'dfXY column "{c}" is not specified as y, exogenous variable, covariate variable, or categorical variable.'
+            else:
+                if catvars == None:
+                    assert c in covars, f'dfXY column "{c}" iis not specified as y, exogenous variable, covariate variable, or categorical variable.'
+                else:
+                    assert c in covars or c in catvars, f'dfXY column "{c}" is not specified as y, exogenous variable, covariate variable, or categorical variable. '
             
         dfXYfit, self.df_pred, self.metrics, self.model, self.history_i, self.history_t, self.model_fit, \
                     self.predict_params["scaler"], make_derived_attributes, make_lags, self.ci = \
@@ -2076,7 +2107,9 @@ class sforecast:
             print("sforecast.fit: make_lags =",make_lags)
         
         self.idx_last_obs = dfXYfit.tail(1).index[0]
-        self.dfXYlast = dfXYfit.loc[self.idx_last_obs].copy()
+        
+        last_i = dfXYfit.index.size - 1
+        self.dfXYfit_last = dfXYfit.iloc[last_i:last_i +1].copy() # last observation ... scaled exogs, endogenous, and lags ... cats are not scaled
         
         return self.df_pred
     
@@ -2101,7 +2134,12 @@ class sforecast:
         idx_last_obs = self.idx_last_obs # last observation index
         index = None
         Nhorizon = self.swin_params["Nhorizon"]
+        
+        
+        
         if isinstance(idx_last_obs,np.int64) or isinstance(idx_last_obs,int): # if index is integer then just add 1 to each successive index
+            if ts_period != None:
+                warnings.warn('ts_period ignored when timeseries has integer index (i.e., non datetime)')
             index = [np.arange(idx_last_obs + 1 ,idx_last_obs + Nhorizon + 1 ,1)]           
         else:  # index not int, assume it is datetime
             index = [pd.Timestamp(idx_last_obs)+ i*ts_period for i in range(1,Nperiods+1) ] if ts_period != None else None
@@ -2151,7 +2189,7 @@ class sforecast:
         
         predict_params = copy.deepcopy(self.predict_params)  # need to do deepcopy or transforms, e.g., lags will produce different forecast for successive calls
         
-        df_pred = sliding_forecast(self.dfXYlast, y = self.y,  predict=True, fit=False,
+        df_pred = sliding_forecast(self.dfXYfit_last, y = self.y,  predict=True, fit=False,
                         model=self.model, model_type=self.model_type, 
                         swin_params = self.swin_params, cm_params = self.cm_params,
                         tf_params=self.tf_params, scale_params = self.scale_params,

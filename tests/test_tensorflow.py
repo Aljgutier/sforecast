@@ -11,7 +11,8 @@ from keras.layers import LSTM, GRU
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import LabelEncoder
 
-##### data ... M5 Sales, 7 Items
+###########
+##### data ... M5 Sales, 7 Items ... Daily
 df_m5sales7 = pd.read_csv("../data/m5_sales_7_items_events_cci_wide.csv", parse_dates = ["date"])
 df_m5sales7 = df_m5sales7.set_index("date")
 
@@ -44,11 +45,8 @@ eoutdim = [np.rint(np.log2(x)).astype(int) for x in eindim]
 print(f'eindim = {eindim}')
 print(f'eoutdim = {eoutdim}')
 
-# display dfXY
-print(f'dfXY.shape = {dfXY.shape}')
 
-###### Univariate
-
+###### Univariate M5 FOODS_030
 def test_univariate(): 
     y = ["unit_sales_CA1_FOODS_030"]
     dfXYtf = dfXY[y] 
@@ -100,6 +98,7 @@ def test_univariate():
     assert (pred_result > pred_expected_m).all() , "TensorFlow Univariate forecast failed pred_result > pred_expected_m"
     assert (pred_result < pred_expected_p).all() , "TensorFlow Univariate forecast failed pred_result < pred_expected_p"
  
+#### Multivariate M5 7 items w Exogs and Endogs 
 def test_multivariate_exog_endog():
     
     dfXYtf = dfXY[covars+exogvars+le_catvars].copy()
@@ -200,7 +199,6 @@ def test_multivariate_exog_endog():
     optimizer = Adam(learning_rate=0.05, decay=.1)
     model_tf_dense_emb.compile(loss='mse', optimizer=optimizer)
 
-
     ### fit test/strain
     y = ["unit_sales_CA1_FOODS_030", "unit_sales_CA1_HOUSEHOLD_416" ,  "unit_sales_CA1_FOODS_393" ]
 
@@ -216,7 +214,6 @@ def test_multivariate_exog_endog():
         "exogvars":exogvars,
         "catvars":le_catvars,
         "derived_attributes_transform": derived_attributes_tf
-
         }  
 
     tf_params = {
@@ -224,7 +221,6 @@ def test_multivariate_exog_endog():
         "Nepochs_t": 200,
         "batch_size":100  
     }
-
 
     sfmvexen = sf.sforecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense_emb, tf_parameters=tf_params)
     
@@ -251,3 +247,128 @@ def test_multivariate_exog_endog():
 
         assert (pred_result > pred_expected_m).all() , f'y = {_y_pred} TensorFlow multivariate-categorical-multi-output {n} forecast with covariates failed pred_result > pred_expected_m'
         assert (pred_result < pred_expected_p).all() , f'y = {_y_pred} TensorFlow multivariate-categorical-multi-output {n} forecast with covariates failed pred_result < pred_expected_p'
+
+#### Data M5 7 items Week
+file = "../data/M5_7items_week.csv"
+sales_week_7_w = pd.read_csv(file, parse_dates = ["yearweek_dt"]).set_index("yearweek_dt")
+
+### Prepare Data
+y = ["unit_sales_FOODS_3_030"]
+print(f'target variable = {y}')
+
+# variable types
+print("variable types ...")
+covars = [c for c in sales_week_7_w.columns if "unit_sales_" in c]
+catvars = [ "month", "event_name_1","event_name_2"]
+exogvars = [ "yeariso" , "weekiso",  "snap_CA",  "CCI_USA", "sell_price_FOODS_3_030"]
+exogs1 = [ "yeariso" , "weekiso",  "snap_CA",  "CCI_USA" ]
+exogs2 = ["sell_price_FOODS_3_030"]
+Ncatvars = len(catvars)
+Ncovars = len(covars)
+Nexogvars = len(exogvars)
+exenvars = [exogs1, exogs2]
+
+# dfXY ... covars + exogvars + catvars
+cols = covars+catvars+exogvars
+colsdp = cols  #+ ["yearweek_dt"]
+dfXYdp = sales_week_7_w[colsdp].copy()
+dfXY = sales_week_7_w[cols].copy()
+
+# label Encoding
+le_catvars = [ "le_"+ c for c in catvars ] # label encoded category columns
+le = LabelEncoder()
+dfXY[le_catvars] = dfXY[catvars].apply(le.fit_transform)
+
+# embedding dimensions
+eindim = [dfXY[le_catvars].groupby(c)[c].count().index.size + 1 for c in le_catvars] # add 1 to the dim or err in TF
+eoutdim = [np.rint(np.log2(x)).astype(int) for x in eindim]
+
+dfXY = dfXY[covars+exogvars+le_catvars]
+
+### TensorFlow Model
+Nlags = 5
+Ndense1 = Nlags * Ncovars 
+Ndense2 = len(exogs1)
+Nlinear = len(exogs2) 
+Nemb = Ncatvars
+Nembout = sum(eoutdim)
+Nout = Ncovars
+
+#Ndense = Nlags  # N continous/dense variables, in this case covars is 1 (univarate)
+
+# Dense Network, 2 hidden layers, continuous variables ... covar lags and exogenous variables
+covarlags_in = Input((Ndense1,))
+hcovarlags = Dense(Ndense1, activation='relu')(covarlags_in)
+
+exogs1_in = Input((Ndense2,))
+hexogs1 = Dense(Ndense2, activation='relu')(exogs1_in)
+
+exogs2_in = Input((Nlinear,))
+hexogs2 = Dense(Nlinear)(exogs2_in)
+
+
+# embeddings, cat vars
+cat_inputs_list = [ Input((1,)) for c in range(Nemb) ]  # one embedding for each categorical variable
+emb_out_list = [Embedding(ein,eout,input_length=1)(cat) for ein,eout,cat in zip(eindim ,eoutdim,cat_inputs_list) ]
+emb_flat_list = [Flatten()(emb_out) for emb_out in emb_out_list ]
+
+# combined 
+combined = concatenate([hcovarlags]+emb_flat_list + [hexogs1] )
+combined_d = Dropout(0.2)(combined)
+
+# dense reduction layers
+Nh1c = Ndense1 + Nembout + Ndense2 # 
+h1c = Dense(Nh1c, activation='relu')(combined_d)
+h1c_d = Dropout(0.2)(h1c)
+Nh2c = np.rint(Nh1c/2).astype(int)
+h2c = Dense(Nh2c, activation='relu')(h1c_d)
+h2c_d = Dropout(0.2)(h2c)
+
+# combined to output ... combine the hidden reduced variables and the linear
+combined_to_out = concatenate([h2c_d]+[hexogs2])
+
+# output
+output = Dense(Nout)(combined_to_out)  # linear activation ... linear combination 
+model_tf_dense2_emb_so = Model(inputs=[covarlags_in, exogs1_in, exogs2_in, cat_inputs_list], outputs=output)
+
+# define optimizer and compile
+optimizer = Adam(learning_rate=0.07, decay=.2)
+model_tf_dense2_emb_so.compile(loss='mse', optimizer=optimizer)
+
+def test_exengroups():
+    
+    # Fit
+    Ntest = 3
+    swin_params = {
+        "Ntest":Ntest,
+        "Nhorizon":1,
+        "Nlags":Nlags,
+        "minmax" :(0,None),
+        "covars":covars,
+        "catvars":le_catvars,
+        "exogvars":exogvars,
+        "exenvars":exenvars
+        }  
+
+    tf_params = {
+        "Nepochs_i": 500,
+        "Nepochs_t": 200,
+        "batch_size":100  
+    }
+
+    sf_tf_dense_emb_so = sf.sforecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense2_emb_so, tf_parameters=tf_params)
+
+    df_pred = sf_tf_dense_emb_so.fit(dfXY)
+    
+    pred_expected =  np.array([50.5, 46.3, 34.5 ])
+    
+    y_pred = y[0]+"_pred"
+
+    pred_expected_p = pred_expected + 10
+    pred_expected_m = pred_expected - 10
+    pred_result = df_pred[y_pred].tail(Ntest).values
+
+    assert (pred_result > pred_expected_m).all() , "TensorFlow Univariate forecast failed pred_result > pred_expected_m"
+    assert (pred_result < pred_expected_p).all() , "TensorFlow Univariate forecast failed pred_result < pred_expected_p"
+
+    
