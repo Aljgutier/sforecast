@@ -1721,15 +1721,21 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         ### end sliding_forecast
         
 class sforecast:
-    """Sliding window forecast model.
+    """Sliding window forecast model (class). Sforecast supports sliding (i.e., expanding) window fit and predict operations. 
+    The fit operation is an out-of-sample train test fit, where Ntest (see parameter swin_paramters:Ntest, below) defines the size of the training obervations and test observations.
+    After the first train/test operation the train and test slides forward where the training set increases by Nhorizon observations and Ntest decreases by Ntest observatsions.
+    The last fit of the sliding window corresponds to the last observation in the dfXY input DataFrame. 
+    
+    The model is retrained every Nhorizon steps, where Nhorizon defaults to 1. Nhorizon currently supports recursive (Nhorizong x 1-step) forecasts and in the future (under development) direct forecasts (Nhorizon models) over the Nhorizon interval. 
+    THe predict operation makes N-step (N x 1-step) recursive forcasts, correspondng to the recursive/single_step fit operation or Nhorizon direct forecasts (under development) correspondng to a direct forecast fit operation.
     
     **__init__(self,  y="y", model=None, ts_parameters=None)**
      Recieves inputs defining the sliding forecast model including ML model, time-series sliding/expanding window hyper-parameters, and ML feature scaling.
         
         Args:
-            y (str or list): Forecast (dependent) variable(s)
+            y (str or list): Forecast target (dependent) variable(s)
             
-            model (ML Model): SK Learn ML mode, tensorflow, or None (if statsmodel)
+            model (ML Model): The ML model to be used in the forecast operation. It can be a SK Learn model (when model_type = "sk") or TensorFlow model if model_type = "tf". This variable is ignored if model_type = "cm" if (classical forecast moodel).
             
             model_type (str): indicates the type of model, "sk" (Sklearn), "cm" (statsmodel), or "tf" (TensorFlow).
             
@@ -1737,27 +1743,21 @@ class sforecast:
                         
                 Nlags (int): Add a lagged variable to the training from 1 to Nlags . Lagged variables enable accounting for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
             
-                covars (list):  List of co-variate variables. If not already present, the y forecast variable(s) will be added to this co_vars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values >0 and <= Nlags are included in the training variables. Defaults to None.
+                covars (list):  List of co-variate variables. If not already present, the y forecast variable(s) will be added to the covars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values > 0 and <= Nlags are included in the training variables.
                 
                 catvars (list):  List of categorical variables, only relevant for TensorFlow models. Default = None.
                 
-                exenvars (list):  List of exogenous (e.g., input variables) and enodogenous (e.g., derived variables), continuous, variables. Note that categorical variables are contained in catvars, not in exenvars.
-                During the prediction phase, exenvars must be input (see predict function, below) so that they can be combined with other attribures and used as input to the prediction/forecast.
-                Default is None. exenvars can be a list of lists, in which case it represents groups of variables that can be processed differently, for example by the TensorFlow model. 
-                For example, a TensorFlow models can process exenvars with a dense feed forward network and covariate lagged variables in an LSTM. Use of exenvars is optional. 
-                If all continuous variables (e.g., exenvars, and covariable lags) are input to a dense network, or other model (SkLearn model), then there is no need to specify the exenvars.
+                exenvars (list):  List of exogenous (e.g., input variables) and enodogenous (e.g., derived variables). Exenvars is for continuous, variables. Categorical variables are contained in catvars, not in exenvars.
+                Exenvars can be a list of lists, in which case it represents groups of variables that can be processed differently, for example by the TensorFlow model. 
+                For example, a TensorFlow models can process exenvars with a dense feed forward network and covariate lagged variables in an LSTM.
             
-                Ntest (int): number of predictions to make. Defaults to 1. 
+                Ntest (int): number of predictions to make. Defaults to 1. Ntest > 0 will cause the sliding forecast to divide the observations into trainng and test. The first training will use the last Ntest observatios as the test set and the previous observations as the training set. Ntest can be set to 0 in which case all observations are used as the training set and there are no test statistics to maintain.
                 
                 alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
             
-                Nhorizon (int):  n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1. Defaults to 1
-            
-                i_start (int):  The first prediction where i corresponds the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Ntest + 1. Defaults to None.
+                Nhorizon (int):  n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1.
                 
                 minmax (tuple): d;lsfasd;fjla;
-            
-                idx_start (int): The first prediction specified as the dataframe index. idx_start takes presidence over i_start. Defaults to None.
             
                 ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows. 
                 
@@ -1769,15 +1769,19 @@ class sforecast:
                     
                     * "tdistribution" - compute the t-distribution confidence interval  
                     
+                horizon_predict_method (string): "single_step" recursive Nhorizon 1-step recursive forecasts over the Nhorizon interval, direct (Nhorizon models) over the Nhorizon period
+                
+                derived_attributes_transform: a transform for derived (endogenous/dependent) attributes. See example.ipynb for how to create derived endogenous attributes.
+                    
             tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
                 * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
-                * Nepochs_t: Numbre of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
+                * Nepochs_t: Number of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
                 * batch_size: Defaults to 32
                 * lstm: defaults to False
                 
-            cm_params (dictionary): dsfdsfa
+            cm_params (dictionary): parameters for the classical forecast models, when model_type = "cm"
             
-                model (str): The supported models are "arima", "sarimax" and "autoarima". THe Default is None.
+                model (str): The supported models are "arima", "sarimax" and "auto_arima". THe Default is None.
                 
                 order (tuple): The order tuple contains the (p,d,q) parameters of the ARIMA and SARIMA models. The Default is None.
                 
@@ -1833,13 +1837,11 @@ class sforecast:
     
         metrics (dictionary of dictionaries):  {y (key): {MSE: number} , {MAE: number} , ... }
         
-        model (ML Model):  ML Model. After forecasting (i.e., fitting) corresponds to the final state of the model at the last window position.
+        model (ML Model):  ML Model. After fitting the variable corresponds to the trained model at the last window position.
         
-        ts_params (dictionary): dictionary of sliding/expanding window model hyper-parameters. See __init()__ documentation or further information.
+        ts_params (dictionary): dictionary of sliding/expanding window model hyper-parameters.
         
-        y (list): list of forecast variables
-        
-        dfXYfc  (DataFrame): the initial DataFrame with all initial rows, X, Y variables, and the addition of lagged variabiles minus initial rows with NaNs due to creating lagged variables (i.e., shifting).
+        dfXYfit_last (DataFrame): the last row of the fitted dataframe. The dataframe includes covariate columns (note, unlagged covariates are not used for the fit or predict operations) and all columns (variables) used in the predict operation includind lagged covariates, exogenous variables, derived/endogenous variables, and categorical variables. Continuous variables (not covariates) are scaled according the scale_parameters input dictionary.
         
         df_pred (DataFrame): Dataframe containing the prediciton results. See sforecast.forecast() for additional information.
 
@@ -1861,7 +1863,7 @@ class sforecast:
             "alpha":0.2,
             "ci_method":"linear",
             "minmax":(None,None),
-            "horizon_predict_method":"single_step", # single_step, multi_step
+            "horizon_predict_method":"single_step", # single-step (recursive) , direct
             "derived_attributes_transform":None,
             "derived_attributes":None
         }
@@ -1972,7 +1974,7 @@ class sforecast:
         self.history_i=None             # TensorFlow training history
         self.history_t=None             # TensorFlow tunning for last tunning/training cycle
         self.idx_last_obs = None        # last observation index
-        self.dfXYfit_last = None         # last observation for forcast ... scaled exogs, endogenous, and lags ... cats are not scaled
+        self.dfXYfit_last = None        # last observation for forcast ... scaled exogs, endogenous, and lags ... cats are not scaled
         self.metrics = None             # rmse and mae for each y prediction
         self.ci  = None                 # ci upper lower
 
