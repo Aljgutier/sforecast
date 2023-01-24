@@ -1368,64 +1368,56 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
 def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=None, tf_params=None, scale_params = None,
                      fit=True, predict=False, predict_params = None,  verbose = False, debug = False):
     
-    '''Receives as input DataFrame of X (exogenous + co-vvariates)  and Y (single or multiple forecasts), and an untrained model of type SKLearn or TensorFlow.
-
+    '''The Sliding forecast function manages the fit and predict operations. It calls test_train_predict() function and receives the 
+    resulting forecast/predictions, and indexes (corresponding to the input dataframe). Sliding_forecast() creates the return data frame, which
+    matches the indexes of the input DataFrame.
+    
+    When called with the input fit==True (sforcast.fit) the sliding_forecast() function manages
+    the creation of metrics including confidence intervals and fit metrics such as RMSE, and MAE. Sliding_foreast() will return 
+    out-of-sample train/test predictions, the fitted model (recursive fit/prediction) or models (direct fit/prediction), fitted scaler transform, 
+    fitted dervived variables transform.
+    
+    When called with input predict==True (sforecast.predict) the sliding_forecast() function
+    and passes the fitted parameters and objects to test_train_predict(). Sliding_foreast receives the predictions and 
+    creates the return DataFrame of predictions.
+    
     Args:
     
-        dfXY (DataFrame): DataFrame containing x and y (target) variables. The data frame is expected to be sorted in ascending order, and may or may not have a time index.
+        df(DataFrame): DataFrame containing x and y (target) variables when called with fit == True. Ignored during the predict operation. The data frame is expected to be sorted in ascending order, and may have an integer or time index.
         
-        model (ml model): An ML model either from SKLearn or TensorFlow. 
+        model (ml model): An ML model either from SKLearn, TensorFlow, or classical forecastng model. If fit == True the model is trained or if predict == True, the trained model is used for foreward predcitions.
         
         model_type (str): Default = "sk" or "tf". Default = "sk".
         
-        swin_params (dictionary): dictioaary of sliding window parameters
-            * covars (list):  List of co-variates. If not already present, the y forecast variable(s) will be added to the co_vars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values >0 and <= Nlags are included in the training variables. Defaults to None.
-            * catvars (list):  List of categorical variables, only relevant for TensorFlow models. Default = None.
-            * exenvars (list):  List of exogenous and endogenous continuous variables. Default is None. exenvars can be a list of lists, for example, in which case it represents groups of variables that can be processed differently by a TensorFlow model. Categorical variables are contained in catvars, not in exenvars, though they are a type of exogenous variable. 
-            * Nlags (int): For each of the covariates, add a lagged variable to the training from 1 to Nlags . Lagged variables account for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
-            * Ntest (int): number of predictions to make. Defaults to 1.    
-            * alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
-            * Nhorizon (int):  N-step (i.e., Nhorizon) forecast. For example, the sliding (or expanding) window will move forward by Nhorizons after Nhorizon predictions. Default to 1.
-            * minmax (tuple): dsfsadlfjasdlfj
-            * i_start (int):  The first prediction, where i corresponds to the DataFrame iloc (i-th index). Defaults to None, in which case the first prediction = last observation - Ntest + 1. Defaults to None.
-            * idx_start (int): The first prediction specified by the DataFrame index. idx_start takes presidence over i_start. Defaults to None.
-            * ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows.   
-                * method from the mumpy.percentile function, one of  
-                    * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
-                    * "minmax" - the min and max values observed errors
-                    * "tdistribution" - compute the t-distribution confidence interval
-            * LastPredRow (Boolean): Default = False. If True the last row of the input dataframe (target variables removed) is saved (variable name = "dfXpredict", 1-row DataFrame ) for subsqequent N-step (N = Nhorizon) forecast. dfXpredict is used as the prediction input when the predict method is called. Note, it is convenient to save dfXpredict DataFrame since it will include the proper pre-processed variables including lags and scale.
+        swin_params (dictionary): refer to sforecast swin_params
         
-        tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
-            * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
-            * Nepochs_t: Numbre of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
-            * batch_size: Defaults to 32
-            * lstm: defaults to False
+        tf_params (Dictionary, optional): refer to sforecast tf_params
                     
-        scale_params (Dictionary): Dictionary of variables to indicate the columns and scaling methods
-            * mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If scale["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If scale_params["mms_cols"] = list of columns then the corresponding columns are scaled with the MinMax scaler.   
-            * ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If scale["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If scale_params["ss_cols"] = a list of columns then the corresponding columns are scaled with StandardScaler.
-            * mm_scaler (model): MinMax scaler model. Defaults to None. THe MinMax scaler model from the fit operation will be passed in for a predict operation (i.e., fit = False)
-            * s_Scaler (model): Standard scaler model. Defautls to None.THe Standard scaler model from the fit operation will be passed in for a predict operation (i.e., fit = False)
+        scale_params (Dictionary, optional): refer to sforecast scale_params
         
-        fit (Booelan): Default = True. Fit a model with sliding forecast (past training and future test) observations. Eiither fit == True or predict = True is required. When fit = False, then predict using the previously trained model. Variables will be scaled with the fitted scalers (MinMax or Standard).
-        predict (Boolean): Default = False. 
+        fit (Booelan): Default = True. Fit a model with sliding forecast (train/test) observations. Eiither fit == True or predict = True is required. When fit = False, 
         
-        dfXYfit (DataFrame): Dataframe from saved from the fit operation. Predict using the previously fit model. Eiither fit == True or predict = True is required.
-            
+        predict (Boolean): Default = False. When predict == True use the trained (fitted) model for predictions. Variables will be scaled with the fitted scalers (MinMax or Standard) as specified and fitted during the fit operation.
+           
+        predict_params (Dictionary, optional). When predict == True the predict_params dictionary contains parameters and objects needed for prediction including make_lags transform, dfexogs (exogenous dataframe), dfxcats (numerical categorical features), and derived attributes transform.
+        
         verbose: True or False. Defaults to False.
 
     Returns:
-        tuple: dfXY, df_pred, metrics, m, history_i, history_t, model_fit 
+        tuple: when fit == True returns dfXY, df_pred, metrics, m, history_i, history_t, m_fit, scaler, make_derived_attributes, make_lags, ci
             * dfXY: XY forecast DataFrame including lagged variables. The rows include all observations. The last row returned corresponds the last training row dfX (after removing y) for predicting/forecast the next N-step forecast (N-step = Nhorizon)
             * df_pred: predictions. See documentation for sforcast.forecast.
             * metrics: Dictionary containg MSE and MAE for the corresponding predictions
             * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
-            * model_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
+            * m_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
             * history_i: TensorFlow training history (initial training)
             * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
             * mmscaler: fitted MinMax scaler if used for scaling, otherwise returns None.
-            * scaler: fitted StandardScaler if used for scaling, otherwise returns None.
+            * scaler: fitted scaler transform of MinMax, StandardScaler or mixed scaling as specified by the scaler_params
+            * make_lags: fitted lagged covariates transform
+            * make_derived_attributes: fitted derived attributes (endogenous) variables transform
+            * ci: confidence intervals
+        y_pred: when predict==True returns df_pred, dataframe of predictions
    '''
 
     # extract variables from input dictionaries
@@ -1517,7 +1509,6 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
             if (fit == True and Ntest > 0) or predict == True:
                 y_pred_values[_cv] = y_pred_values[_cv].flatten()
 
-        
         if debug == True:
             print("sliding_forecast: model_type = tf, y_pred_values =",y_pred_values)
             print("sliding_forecast: model_type = tf, y_test_values =",y_test_values)
@@ -1528,8 +1519,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         # pred all targets (all _y in y) at once
         # one model per y variable ... one model per Nhorizon timestep  
         # if one model and Nhorizon = 1 then model_in is only one model (not a dictionary and not a list)
-        
-        
+            
         if debug == True:
             print(f'sliding_forecast: sk,  covars = {covars}')
             print(f'sliding_forecast: sk,  y = {y}')
@@ -1538,8 +1528,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         y_pred_values, y_test_values, y_pred_idx, dfXY_train, model_out, i_initial_pred, make_derived_attributes, make_lags, scaler  = train_test_predict(dfXY, y, model, 
         model_type=model_type, swin_params=swin_params, cm_params=cm_params, tf_params=tf_params, scale_params = scale_params,
             fit = fit, predict=predict, pred_params=predict_params,verbose=verbose, debug=debug)
-        
-        
+             
         m = model_out
         
         if fit==True and y_test_values != None:
@@ -1721,13 +1710,14 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         ### end sliding_forecast
         
 class sforecast:
-    """Sliding window forecast model (class). Sforecast supports sliding (i.e., expanding) window fit and predict operations. 
-    The fit operation is an out-of-sample train test fit, where Ntest (see parameter swin_paramters:Ntest, below) defines the size of the training obervations and test observations.
-    After the first train/test operation the train and test slides forward where the training set increases by Nhorizon observations and Ntest decreases by Ntest observatsions.
-    The last fit of the sliding window corresponds to the last observation in the dfXY input DataFrame. 
+    """Sforecast supports sliding (expanding) window fit and predict operations. 
+    The fit operation is an out-of-sample train test fit, where the Ntest (swin_paramters:Ntest) defines the size of the training obervations and test observations.
+    The model is retrained every Nhorizon steps. Nhorizon defaults to 1.
+    After the first train/test operation, the training set window slides forward and the training set increases by Nhorizon observations and the test set decreases by Nhorizon observatsions.
+    The last fit corresponds to all observation in the dfXY input DataFrame. 
     
-    The model is retrained every Nhorizon steps, where Nhorizon defaults to 1. Nhorizon currently supports recursive (Nhorizong x 1-step) forecasts and in the future (under development) direct forecasts (Nhorizon models) over the Nhorizon interval. 
-    THe predict operation makes N-step (N x 1-step) recursive forcasts, correspondng to the recursive/single_step fit operation or Nhorizon direct forecasts (under development) correspondng to a direct forecast fit operation.
+    Sforecast supports recursive (Nhorizong x 1-step) forecasts and in the future (under development) direct forecasts (Nhorizon models) over the Nhorizon interval. 
+    The predict operation makes N-step (N x 1-step) recursive forcasts, correspondng to the recursive/single_step fit operation or Nhorizon direct forecasts (under development) correspondng to a direct forecast fit operation.
     
     **__init__(self,  y="y", model=None, ts_parameters=None)**
      Recieves inputs defining the sliding forecast model including ML model, time-series sliding/expanding window hyper-parameters, and ML feature scaling.
@@ -2062,16 +2052,19 @@ class sforecast:
             assert self.swin_params["Nhorizon"]==1, f'Nhorizon > 1 not supported for model_type = auto_arima and derived attributes (exogenous variables) != None'
                 
     def fit(self, dfXY, verbose=False, debug=False):
-        """ML training (on training window) and predictions ("forecast") over the horizon (1 or more observation rows). The forecast uses past observations (training set) to fit the model, then predicts forward and compares the predictions to the actual observations (test set).
-
+        """The fit operation is an out-of-sample train test fit, where the Ntest (swin_paramters:Ntest) defines the size of the training obervations and test observations.
+        The model is retrained every Nhorizon steps. Nhorizon defaults to 1.
+        After the first train/test operation, the training set window slides forward and the training set increases by Nhorizon observations and the test set decreases by Nhorizon observatsions.
+        The last fit corresponds to all observation in the dfXY input DataFrame. 
+        
         Args:
-            dfXY (DataFrame): input DataFrame containing X training variables (exogenous) and Y covariates.
+            dfXY (DataFrame): input DataFrame containing the target variable, covariates (optional), exogenous continuous variables (optional), and categorical variables (optional).
             verbose (bool): True or False. Verbose == True causes the printing of helpful information. Defaults to False.
 
         Returns:
             DataFrame: forecast output including the following columns for each covariate.
             
-            y_train: y training value at the corresponding observation for the initial window (before sliding). Values outside the initial window will be NaN, however y values will then be shown under the y_test column.
+            y_train: y training value at the corresponding observation for the initial window (before sliding). Values outside the initial window will be NaN. After the initial training, y values will then be shown under the y_test column.
             y_test: y value (truth) corresponding to the prediction.
             y_pred: y predicted (i.e. forecast) 
             y_lower:  lower confidence limit
@@ -2137,9 +2130,10 @@ class sforecast:
         """Nperiod forecast next N_periods based on the model trainded during the fit operation. 
         
         Args:
-            Nhorizon (int): Indicates how many periods forward to forecast. Defaults to 1. 
-            dfexog (DataFrame, optional): Defaults to None. If the input (training) dataframes include exogenous variables (independent variables, not derived variables), then a dfexog input dataframe is required for prediction. The number of rows of dfexog must be equal to Nhorizon.
-            ts_period (pandas time offset, optional): Defaults to None. Required if the time-series index is a timestamp. The output forecast index will be successive timestamps with period ts_period.
+            Nperiods (int): Indicates how many periods forward to forecast. Defaults to 1. 
+            dfexog (DataFrame, optional): Defaults to None. If the fit include exogenous variables (independent continous variables, not derived variables), then a dfexog input dataframe is required. The number of rows of dfexog must be <= Npriods.
+            dfcats (DataFrame, optional): Defaults to None. Required if the fit includes categorical variables. The categorical variables must be encodeded (e.f., SK label encoder) as they were for the fit operation.
+            ts_period (pandas time offset, optional): Defaults to None. Not required and is ignroed (a warning is issued) if the timeeries index is an integer. Required if the time-series index is a timestamp. The output forecast index will be successive timestamps with period ts_period.
             verbose (bool, optional): Print helpful information to standard out when True. Defaults to False.
 
         Returns:
@@ -2154,8 +2148,6 @@ class sforecast:
         idx_last_obs = self.idx_last_obs # last observation index
         index = None
         Nhorizon = self.swin_params["Nhorizon"]
-        
-        
         
         if isinstance(idx_last_obs,np.int64) or isinstance(idx_last_obs,int): # if index is integer then just add 1 to each successive index
             if ts_period != None:
