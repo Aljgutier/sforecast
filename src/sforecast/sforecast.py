@@ -18,15 +18,14 @@ import pmdarima as pm
 
 
 def ci_percentile(errors, alpha, method="linear"):
-    """_summary_
+    """Compute confidence interval based on the Numpy percentile method.
 
     Args:
         errors (Numpy Array): Array of errors
         alpha (Numeric): number from 0 to 1 indicating the confidence interval spread, e.g., 0.05 (95%)
-        method (str, optional): _description_. Defaults to "linear", method = one of
-            * ("inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased")
-    Returns:
-        tuple: error_lower, error_uppe
+        method (str, optional): Defaults to "linear", method = one of "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
+    Returns: 
+        error_lower, error_upper
     """
 
     percentile_upper = 100 * (alpha / 2 )
@@ -44,8 +43,8 @@ def ci_tdistribution(errors, alpha):
         errors (Numpy Array): Array of errors
         alpha (Numberic): number from 0 to 1 indicating the confidence interval spread, e.g., 0.05 (95%)
 
-    Returns:
-        tuple: error_lower, error_upper
+    Returns: 
+        error_lower, error_upper
     """
     
     n = len(errors)
@@ -76,8 +75,8 @@ def forecast_confidence(df,alpha, Nhorizon = 1, error="error", method="linear", 
             * "tdistribution" - compute the t-distribution confidence interval
         verbose (bool, optional): _description_. Defaults to False.
 
-    Returns:
-        Dataframe: the input dataframe with error_lower and error_upper
+    Returns: 
+        Dataframe with error_lower and error_upper
     """
     
     df_error = pd.DataFrame(df[error])
@@ -144,7 +143,7 @@ def min_func(x,minvalue):
         minvalue (numeric): minimum allowed value
 
     Returns:
-        numeric: returns x if greater than minvalue, otherwise returns minvalue
+        returns x if greater than minvalue, otherwise returns minvalue
     """
     if  ~np.isnan(x):
         x = x if x > minvalue else minvalue
@@ -158,7 +157,7 @@ def max_func(x,maxvalue):
         maxvalue (numeric): maximum allowed value
 
     Returns:
-        numeric: returns x if greater than minvalue, otherwise returns minvalue
+        returns x if greater than minvalue, otherwise returns minvalue
     """
     if ~np.isnan(x):
         x = x if x < maxvalue else maxvalue
@@ -181,7 +180,7 @@ def nlag_covars(df:object,covars:list, N_lags:int) -> object:
         N_lags (int): add df([col]).shift(i) from i to Nlags for each col in co_vars
 
     Returns:
-        DataFrame: DataFrame of XY variables with the addition of lagged variables.
+        DataFrame of XY variables with the addition of lagged variables.
     """
     
     # co_vars := auto regressive varibles
@@ -237,7 +236,7 @@ class covarlags(BaseEstimator,TransformerMixin):
             debug (bool, optional): _description_. Defaults to False.
 
         Returns:
-            DataFrame: DataFrame with the addition of lagged variables
+            DataFrame with the addition of lagged variables
         """
         
         if not isinstance(df,pd.DataFrame):
@@ -259,7 +258,9 @@ class covarlags(BaseEstimator,TransformerMixin):
         return dfout if Nout==None else dfout.tail(Nout)
     
     def get_last_dfrow(self): # last row from dfmemory ... corresponds to the most recent past
-        """Returns the last row of the saved DataFrame
+        """
+        Returns:
+            the last row of the saved DataFrame
         """
         return self.dfmemory.tail(1)
     
@@ -284,7 +285,7 @@ class minmaxstd_scaler(BaseEstimator,TransformerMixin):
     """The minmaxstd scaler is a transformer that scales ML features according to the SKLEARN minmax scaler (default) and/or the SKlearn StandardScaler.
     The class implements fit() and Transform(). The class extends BaseEstimator and TransformerMixin which extends the fit_transorm() operation.
     
-    **__init()__** initialize the minmax scaler transform
+    **__init()__**
     
     Args:
         * mms_cols(List): list of columns that will be transformed by the MinMaxScaler(). If mms_cols = "all" then all columns are transformed by the MinMaxScaler().
@@ -330,7 +331,7 @@ class minmaxstd_scaler(BaseEstimator,TransformerMixin):
             df (DataFrame): input DataFrame with columns to be scaled.
 
         Returns:
-            DataFrame: DataFrame with scaled columns.
+            DataFrame with scaled columns.
         """
         df_scaled = df
         if self.mms_cols != None:
@@ -369,10 +370,10 @@ def train_test_predict(dfXY:DataFrame, y:list,  model:object, model_type="sk", c
     After the first train/test operation, the training set window slides forward by Nhorizon observations. The training set increases by Nhorizon observations, and the 
     test set decreases by Nhorizon observations. Predictions (y_pred) and actual (y_test) are returned based on each train-test window. 
     
-    The fitted transformers make_lags, scaler, and make_derived_attributes, transform the data during test or predict operations.
-    During a prediction, the forecasted/predicted targets are input to the transformers in order to 
-    generate lagged variables, derived variables, and scale. These are subsuquently input to the fitted model to make a prediction.
-    
+    The fitted transformers, make_lags, scaler, and make_derived_attributes, transform the data during test or prediction operations. 
+    The transformers generate lagged variables, derived variables, and, together with exogenous variables, are scaled. These are subsequently 
+    input to the fitted model to make a prediction.
+     
     The last fit corresponds to all observation in the dfXY input DataFrame. 
     The fitted model, make_lags transform make_derived_attributes, and scaler transform are returned in addition to test predictions, and prediction index (y_pred_idx) relating the prediciton to the input DataFrame.
 
@@ -393,28 +394,28 @@ def train_test_predict(dfXY:DataFrame, y:list,  model:object, model_type="sk", c
         pred_params (Dictionary, optional): This input is required when predict = True, otherwise it is ignored. The pred_params dictionary contains the fitted transorms (make_lags, scaler, make_attributes_transform), which are applied during the predict operation. See sforecast for further docuentation.
         verbose (bool, optional): Defaults to False.
         
-    Returns:
-        tuple: returns a tuple of parameters. See below. 
-            * y_pred_nda (Numpy n-dimensional arrray): predicted values 
-            * y_test_nda (Numpy n-dimensional arrray): test_values (i.e., truth, actual observations). y_test_nda = None when predict = True.
-            * y_pred_idx (List): list of integers or timestamps corresponding to the location of the prediciton relative to the input DataFrame.
-            * dfXY_train (DataFrame): fitted dfXY DataFrame including scaled variables exogvars, covariates, and derived attributes.
-            * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
-            * model_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
-            * i_initial_pred: i-th (iloc) index corresponding to the first prediction
-            * make_lags (transformer): fitted transformer for creating lagged variables.
-            * scaler (transformer): fitted scaler for MinMaxScaler and or StandardScaler transformations.
-            * make_derived_attributes: fitted make derived attributes transformer.
-            * history_i: TensorFlow training history (initial training)
-            * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
-            
-            if model_type == "cm":  
-                * return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler
-            if model_type == "sk":
-                return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, i_initial_pred, make_derived_attributes, make_lags, scaler
-            elif model_type =="tf":
-                return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, history_i, history_t,i_initial_pred, make_derived_attributes, make_lags, scaler
-            
+    Returns: variables
+        * y_pred_nda (Numpy n-dimensional arrray): predicted values  
+        * y_test_nda (Numpy n-dimensional arrray): test_values (i.e., truth, actual observations). y_test_nda = None when predict = True.
+        * y_pred_idx (List): list of integers or timestamps corresponding to the location of the prediciton relative to the input DataFrame.
+        * dfXY_train (DataFrame): fitted dfXY DataFrame including scaled variables exogvars, covariates, and derived attributes.
+        * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
+        * model_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
+        * i_initial_pred: i-th (iloc) index corresponding to the first prediction
+        * make_lags (transformer): fitted transformer for creating lagged variables.
+        * scaler (transformer): fitted scaler for MinMaxScaler and or StandardScaler transformations.
+        * make_derived_attributes: fitted make derived attributes transformer.
+        * history_i: TensorFlow training history (initial training)
+        * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
+        
+        return:  
+            * if model_type == "cm":  
+                return = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler  
+            * if model_type == "sk":  
+                return = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, i_initial_pred, make_derived_attributes, make_lags, scaler  
+            * elif model_type =="tf":   
+                 return = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, history_i, history_t,i_initial_pred, make_derived_attributes, make_lags, scaler  
+        
     """
     
     if fit ==True:
@@ -1467,7 +1468,7 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         verbose: True or False. Defaults to False.
 
     Returns:
-        tuple: when fit == True returns dfXY, df_pred, metrics, m, history_i, history_t, m_fit, scaler, make_derived_attributes, make_lags, ci
+        when fit = True 
             * dfXY: XY forecast DataFrame including lagged variables. The rows include all observations. The last row returned corresponds the last training row dfX (after removing y) for predicting/forecast the next N-step forecast (N-step = Nhorizon)
             * df_pred: predictions. See documentation for sforcast.forecast.
             * metrics: Dictionary containg MSE and MAE for the corresponding predictions
@@ -1479,7 +1480,10 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
             * make_derived_attributes: fitted derived attributes (endogenous) variables transform
             * make_lags: fitted lagged covariates transform
             * ci: confidence intervals
-        y_pred: when predict==True returns df_pred, dataframe of predictions
+            
+        when predict = True 
+            * df_pred: dataframe of predictions
+        
    '''
 
     # extract variables from input dictionaries
@@ -1783,9 +1787,9 @@ class sforecast:
     test set decreases by Nhorizon observations.
 
     The fitted transformers make_lags, scaler, and make_derived_attributes, transform the data during test or predict operations.
-    During a prediction, the forecasted/predicted targets are input to the transformers in order to 
-    generate lagged variables, derived variables, and scale. These are subsuquently input to the fitted model to make a prediction.
-    
+    The transformers
+    generate lagged variables, derived variables, and together with exogenous variables are scaled. 
+    These are subsuquently input to the fitted model to make a prediction.
     
     The last fit corresponds to all observation in the dfXY input DataFrame. 
     The fitted model, make_lags transform make_derived_attributes and scaler transform are returned in addition to test predictions, and index for each prediciton matching the input dataframe.
@@ -1809,10 +1813,11 @@ class sforecast:
                 * alpha (Float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
                 * Nhorizon (Integer) - n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1.  
                 * minmax (Tuple): Defaults to (None, None). Imposes and lower and upper limit on the forecast/predictions (and confidence intervals), respectively.
-                * ci_method (String) -  The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows.   
-                    * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"    
-                    * "minmax" - the min and max values observed errors  
-                    * "tdistribution" - compute the t-distribution confidence interval   
+                * ci_method (String):
+                    * The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are
+                        * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"    
+                        * "minmax" - the min and max values observed errors  
+                        * "tdistribution" - compute the t-distribution confidence interval   
                 * horizon_predict_method (String): "single_step" or "direct". "single_step" indications predictions over the horizon window are recursive, meaning a single ML model with Nhorizon 1-step recursive predictions. "direct" indeicates that predictions over the horizon interval use the direct forecasting (Nhorizon models).
                 * derived_attributes_transform: a transform for derived (endogenous/dependent) attributes. See example.ipynb for how to create derived endogenous attributes.
             * tf_params (Dictionary, optional) - TensorFlow parameters. Defaults to None.
