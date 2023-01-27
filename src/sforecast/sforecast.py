@@ -203,14 +203,16 @@ def nlag_covars(df:object,covars:list, N_lags:int) -> object:
 
 # covarlags tranformer
 class covarlags(BaseEstimator,TransformerMixin):
-    """ Transfomer for creating lagged variables. The transformer includes a Fit and Transform operation. 
+    """ Transfomer for creating lagged variables. The transformer
+    includes fit() and transform() , and fit_transform() operations (by extension of TrasnformerMixin).
+    The transofrm retains a memory of Nlags+1 columns.
     
-    __init__ - receives two inputs "covars" and "Nlags", the number of lagged steps per covariate.
+    **__init__**
     
-    Fit - saves a dataframe (dfmemory) of length (rows) Nlags for future use. 
+    Args:
+        covars (list): list of column names representing covariates.
+        Nlags (int): number of lags to implement for each covariate.
     
-    Transform - transforms the input data frame returning a data frame with the lagged covariates. The Transform is applied to the entire input data frame or if a new row is supplied, it is appended to the existing dataframe in memmory and transform is applied on the new saved dataframe. The olest row s dropped.
-
     """
     def __init__(self, covars=None, Nlags=1):
         self.covars=covars
@@ -220,12 +222,24 @@ class covarlags(BaseEstimator,TransformerMixin):
         assert self.Nlags >=0 ,f'Nlags = {self.Nlags} not allowed. Nlags must be >= 0'
         
     def fit(self,df):
+        
         self.dfmemory = df.tail(self.Nmemory) if df.index.size > self.Nmemory else df.index.size
         return self
     
     def transform(self, df=None, Nout=None, dfnewrows=None, debug=False):
         # if df not spefified then transform dfmemory
         # add new row(s) and update dfmemory
+        """Create lagged variables from covariates.
+
+        Args:
+            df (DataFrame, optional): _description_. Defaults to None.
+            Nout (int, optional): Number of output rows. Defaults to None.
+            dfnewrows (DataFrame, optional): new row to append to the DataFrame. The DataFrame memory will be updated with the last Nlags+1 rows. Defaults to None.
+            debug (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            DataFrame: DataFrame with the addition of lagged variables
+        """
         
         if not isinstance(df,pd.DataFrame):
             df = self.dfmemory
@@ -246,9 +260,18 @@ class covarlags(BaseEstimator,TransformerMixin):
         return dfout if Nout==None else dfout.tail(Nout)
     
     def get_last_dfrow(self): # last row from dfmemory ... corresponds to the most recent past
+        """Returns the last row of the saved DataFrame
+        """
         return self.dfmemory.tail(1)
     
     def set_last_y(self,y,yvalue, debug=False):
+        """Update the value of the column "y" corresponding to the last row of the saved DataFrame.
+
+        Args:
+            y (string or list): column name(s) of the last row to update with the values yvalue
+            yvalue (Numeric or list of Numerics): value(s) corresponding to "y"
+
+        """
         #last_idx = self.dfmemory.index[ self.dfmemory.index.size - 1 ] # this method can cause subtle mis matches in index types 
         last_i =  self.dfmemory.index.size - 1 
         self.dfmemory[y].iloc[last_i] = yvalue
@@ -259,13 +282,16 @@ class covarlags(BaseEstimator,TransformerMixin):
     
 # minmaxstd scaler        
 class minmaxstd_scaler(BaseEstimator,TransformerMixin):
-    """The minmaxstd scaler is a transformer that scales ML features according to the SKLEARN minmax scaler (default) and/or the SKlearn standard Scaler.
+    """The minmaxstd scaler is a transformer that scales ML features according to the SKLEARN minmax scaler (default) and/or the SKlearn StandardScaler.
+    The class implements fit() and Transform(). The class extends BaseEstimator and TransformerMixin which extends the fit_transorm() operation.
     
-    **__init()__** - accepts arguements for designating. 
-
+    **__init()__** initialize the minmax scaler transform
+    
     Args:
-        BaseEstimator (_type_): _description_
-        TransformerMixin (_type_): _description_
+        * mms_cols(List): list of columns that will be transformed by the MinMaxScaler(). If mms_cols = "all" then all columns are transformed by the MinMaxScaler().
+        * ss_cols(List): list of columns that will be transformed by the StandardScaler(). ss_cols takes prededance over ss_cols.
+        * donotscale_cols (List): list of columns to ignore (not scale).
+        
     """
     def __init__(self, mms_cols=None, ss_cols=None, donotscale_cols=None):
         self.mms_cols = mms_cols
@@ -275,6 +301,12 @@ class minmaxstd_scaler(BaseEstimator,TransformerMixin):
         self.sscaler = None
 
     def fit(self, df):
+        """Fit the scaler to the input DataFrame.
+
+        Args:
+            df (DataFrame): input DataFrame with columns to be fitted.
+
+        """
         # mms scaler fit
         if self.mms_cols != None:
             scaler = MinMaxScaler()         
@@ -293,6 +325,14 @@ class minmaxstd_scaler(BaseEstimator,TransformerMixin):
         return self 
     
     def transform(self, df):
+        """Transform the input DataFrame (df)
+
+        Args:
+            df (DataFrame): input DataFrame with columns to be scaled.
+
+        Returns:
+            DataFrame: DataFrame with scaled columns.
+        """
         df_scaled = df
         if self.mms_cols != None:
             if (self.mms_cols == "all") & (self.ss_cols != "all"): 
@@ -314,44 +354,67 @@ class minmaxstd_scaler(BaseEstimator,TransformerMixin):
         return df_scaled
     
 
-def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_params=None,  scale_params = None,
+def train_test_predict(dfXY:DataFrame, y:list,  model:object, model_type="sk", cm_params=None,  scale_params = None,
                     swin_params=None,  tf_params=None, fit = True, predict=False, pred_params = None, verbose=False , debug=False) -> list:
-    """Train and predict over horizons. The number of predictions = Ntest. First prediction (forecast) corresponds to i-th (i_initial_pred) row of the input DataFrame.
+    """The train_test_predict() function is the work horse producing the fit (train and test) and predictions. 
+    During the fit operation test_train_predict() receives the input observations (dfXY) and fits the make lags transform, scaler transform, and derived
+    attriutes transform as required by the input paramters. Train_test_predict manages the transformation of the input data for compatiability
+    with the specified model (Classical, TensorFlow, or SKLearn), fits the the model to the training data, and predicts on the test dataset. 
+    
+    When fit = True, test_train_pridict() fits the model and transforms including make_lags, derived_attributes transform, and scaler transform. 
+    The model is fit to the training set and predicts over Nhorizon according to 
+    recursive (Nhorizon x 1-step recursive predictions) or direct forecasting (Nhorizon models) over Nhorizon time steps. 
+    
+    The out-of-sample train-test methodology works as follows. The first training and test window (before sliding) has a training set comprised of total observations - Ntest and test set size
+    Ntest. The model is retrained every Nhorizon steps, where Nhorizon defaults to 1. 
+    After the first train/test operation, the training set window slides forward by Nhorizon observations. The training set increases by Nhorizon observations, and the 
+    test set decreases by Nhorizon observations. Predictions (y_pred) and actual (y_test) are returned based on each train-test window. 
+    
+    The fitted transforms make_lags, scaler, and make_derived_attributes transform the data during test or predict operations.
+    During a prediction, (recursive or direct), the forecasted/predicted targets are input to the transformers in order to generate input to the fitted model and theren make the subsequent prediction.
+    
+    The last fit corresponds to all observation in the dfXY input DataFrame. 
+    The fitted model, make_lags transform make_derived_attributes, and scaler transform are returned in addition to test predictions, and prediction index (y_pred_idx) relating the prediciton to the input DataFrame.
 
+    When predict = True, test_train_predict() recieves the pred_params dictionary with the fitted make_lags, make_derived_attributes, and scaler transform. Nperiod predictions
+    are made according to the fitted model, recursive or direct forcast. For direct forecast Nperiods must be <= Nhorizon, since there are Nhorizon trained models.
+    
     Args:
-        dfXY(DataFrame): DataFrame with forecast variables.
+        dfXY(DataFrame): DataFrame with dependent and independennt variables.
         y (string, list): target variable string, or list of variables.
         model (object): reference/pointer to the forecast model
-        covars (list): list of covariates
-        i_initial_pred (int): i-th (integer) index of input DataFrame, corresponding to the first prediction. 
         model_type (str, optional): type of forecast model "cm" (classical), "sk" (SK Learn), or "tf" (TensorFlow). Defaults to "sk".
-        catvars (list, optional): list of categorical variables. Defaults to None.
-        exenvars (list, optional): list of exogenous variables. Defaults to None.
-        Ntest (int, optional): N predictions. Defaults to 1.
-        Nstep (int, optional): Predict for Nhorizon before retraining or tuning (TensorFlow) the model. Defaults to 1.
-        Nlags (int, optional): Number co-variate lags. Defaults to 1
-        cm_params (Dictionary, optional): Classical model parameters. Defaults to None.
-        scaler (adfafdj): ddasf
-        
-        tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
-            * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
-            * Nepochs_t: Numbre of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
-            * batch_size: Defaults to 32
-            * lstm: defaults to False
-        
+        swin_params (Dictionary): sliding window parameters. See sforecast documentation.
+        cm_params (Dictionary, optional): Classical model parameters. See sforecast documentation.
+        scaler_params (Dictionaryj): scaler teransform including MinMax and StandardScaler. See sforecast documentation.
+        tf_params (Dictionary, optional): TensorFlow paramters. See sforecast documentation
         fit (Booelan): Default = True. Fit a model with sliding forecast (past training and future test) observations. When fit = False, then predict using the previously trained model. Variables will be scaled with the fitted scalers (MinMax or Standard).
-
+        predict (Boolean): Default = False. Predict based on the the fitted model and transforms (make_lags, scaler, derived_attributes).
+        pred_params (Dictionary, optional): This input is required when predict = True, otherwise it is ignored. The pred_params dictionary contains the fitted transorms (make_lags, scaler, make_attributes_transform), which are applied during the predict operation. See sforecast for further docuentation.
         verbose (bool, optional): Defaults to False.
         
-
     Returns:
-        tuple: y_pred_values, y_test_values, y_pred_idx, m, model_fit (cm models), history_i (TensorFlow), history_t (TensorFlow)
-            * y_pred_values (Numpy n-dimensional arrray): predicted values 
-            * y_test_values (Numpy n-dimensional arrray): test_values (i.e., truth, actual observations)
+        tuple: returns a tuple of parameters. See below. 
+            * y_pred_nda (Numpy n-dimensional arrray): predicted values 
+            * y_test_nda (Numpy n-dimensional arrray): test_values (i.e., truth, actual observations). y_test_nda = None when predict = True.
+            * y_pred_idx (List): list of integers or timestamps corresponding to the location of the prediciton relative to the input DataFrame.
+            * dfXY_train (DataFrame): fitted dfXY DataFrame including scaled variables exogvars, covariates, and derived attributes.
             * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
             * model_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
+            * i_initial_pred
+            * make_lags (transformer): fitted transformer for creating lagged variables.
+            * scaler (transformer): fitted scaler for MinMaxScaler and or StandardScaler transformations.
+            * make_derived_attributes: fitted make derived attributes transformer.
             * history_i: TensorFlow training history (initial training)
             * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
+            
+            if model_type == "cm":  
+                * return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, model_fit, i_initial_pred, make_derived_attributes, make_lags, scaler
+            if model_type == "sk":
+                return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, i_initial_pred, make_derived_attributes, make_lags, scaler
+            elif model_type =="tf":
+                return_tuple = y_pred_nda, y_test_nda, y_pred_idx, dfXY_train, m, history_i, history_t,i_initial_pred, make_derived_attributes, make_lags, scaler
+            
     """
     
     if fit ==True:
@@ -1368,24 +1431,24 @@ def train_test_predict(dfXY:object, y:list,  model:object, model_type="sk", cm_p
 def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=None, tf_params=None, scale_params = None,
                      fit=True, predict=False, predict_params = None,  verbose = False, debug = False):
     
-    '''The Sliding forecast function manages the fit and predict operations. It calls test_train_predict() function and receives the 
-    resulting forecast/predictions, and indexes (corresponding to the input dataframe). Sliding_forecast() creates the return data frame, which
-    matches the indexes of the input DataFrame.
+    '''Sliding_forecast() manages the fit and predict operations. It calls test_train_predict() function and receives the 
+    resulting forecast/predictions, and indexes (corresponding to the input dataframe). Sliding_forecast() creates the return data frame, 
+    manages the creation of the return parameters and objects.
     
-    When called with the input fit==True (sforcast.fit) the sliding_forecast() function manages
+    When called with the fit = True (called by sforcast.fit), sliding_forecast() manages
     the creation of metrics including confidence intervals and fit metrics such as RMSE, and MAE. Sliding_foreast() will return 
     out-of-sample train/test predictions, the fitted model (recursive fit/prediction) or models (direct fit/prediction), fitted scaler transform, 
-    fitted dervived variables transform.
+    fitted dervived variables transform. Accuracy metrics are formulated based on each train-test window.
     
-    When called with input predict==True (sforecast.predict) the sliding_forecast() function
-    and passes the fitted parameters and objects to test_train_predict(). Sliding_foreast receives the predictions and 
+    When called with input predict = True (called by sforecast.predict) sliding_forecast()
+    passes the fitted objects (model, make_lags, scaler, make_derived_attributes) to test_train_predict(). Subsequently, sliding_foreast receives the predictions and 
     creates the return DataFrame of predictions.
     
     Args:
     
-        df(DataFrame): DataFrame containing x and y (target) variables when called with fit == True. Ignored during the predict operation. The data frame is expected to be sorted in ascending order, and may have an integer or time index.
+        df(DataFrame): DataFrame containing x and y (target) variables. When called with fit = True, dfX is passed to test_train_predict. This DataFrame is ignored during the predict operation. The DataFrame is expected to be sorted in timeseries ascending time order, and may have an integer or time index.
         
-        model (ml model): An ML model either from SKLearn, TensorFlow, or classical forecastng model. If fit == True the model is trained or if predict == True, the trained model is used for foreward predcitions.
+        model (ml model): An ML model either from SKLearn, TensorFlow, or classical forecastng model. If fit = True the model is trained or if predict == True, the trained model is used for foreward predcitions.
         
         model_type (str): Default = "sk" or "tf". Default = "sk".
         
@@ -1395,11 +1458,11 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
                     
         scale_params (Dictionary, optional): refer to sforecast scale_params
         
-        fit (Booelan): Default = True. Fit a model with sliding forecast (train/test) observations. Eiither fit == True or predict = True is required. When fit = False, 
+        fit (Booelan): Default = True. Fit the ML model, scaler, make_lags transform, and derivived attributes_transform with out-of-sample (train/test) observations. Eiither fit = True or predict = True is required.
         
-        predict (Boolean): Default = False. When predict == True use the trained (fitted) model for predictions. Variables will be scaled with the fitted scalers (MinMax or Standard) as specified and fitted during the fit operation.
+        predict (Boolean): Default = False. When predict = True use the trained (fitted) model and objects (make_lags, scaler, derived_attributes transform) for predictions. Variables will be scaled with the fitted scalers.
            
-        predict_params (Dictionary, optional). When predict == True the predict_params dictionary contains parameters and objects needed for prediction including make_lags transform, dfexogs (exogenous dataframe), dfxcats (numerical categorical features), and derived attributes transform.
+        predict_params (Dictionary, optional). When predict = True the predict_params dictionary contains parameters and objects needed for prediction including make_lags transform, dfexogs (exogenous dataframe), dfxcats (numerical categorical features), and derived attributes transform.
         
         verbose: True or False. Defaults to False.
 
@@ -1409,13 +1472,12 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
             * df_pred: predictions. See documentation for sforcast.forecast.
             * metrics: Dictionary containg MSE and MAE for the corresponding predictions
             * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
-            * m_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
             * history_i: TensorFlow training history (initial training)
             * history_t: TensorFlow training (tunning) history corresponding to the final (last) training.
-            * mmscaler: fitted MinMax scaler if used for scaling, otherwise returns None.
+            * m_fit: Fitted model for the case of model_type = "cm" ARIMA and ARIMAX , otherwise = None.
             * scaler: fitted scaler transform of MinMax, StandardScaler or mixed scaling as specified by the scaler_params
-            * make_lags: fitted lagged covariates transform
             * make_derived_attributes: fitted derived attributes (endogenous) variables transform
+            * make_lags: fitted lagged covariates transform
             * ci: confidence intervals
         y_pred: when predict==True returns df_pred, dataframe of predictions
    '''
@@ -1467,8 +1529,9 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
     
     #### copy df
     # copy the input dataframe to ensure the original is not modified
-    dfXY = None
-    dfXY = df.copy() if fit == True else None
+    #dfXY = None 
+    dfXY = df.copy() if fit == True else None # dfXY = None if predict == True
+
 
     ###############################    
     ##### Train, Test, Predict  ###
@@ -1711,129 +1774,84 @@ def sliding_forecast(df, y, model, model_type="sk", swin_params=None, cm_params=
         
 class sforecast:
     """Sforecast supports sliding (expanding) window fit and predict operations. 
-    The fit operation is an out-of-sample train test fit, where the Ntest (swin_paramters:Ntest) defines the size of the training obervations and test observations.
-    The model is retrained every Nhorizon steps. Nhorizon defaults to 1.
-    After the first train/test operation, the training set window slides forward and the training set increases by Nhorizon observations and the test set decreases by Nhorizon observatsions.
-    The last fit corresponds to all observation in the dfXY input DataFrame. 
+    The fit operation is an out-of-sample train test fit, where the Ntest (swin_paramters:Ntest) defines the size of the training obervations
+    and test observations. 
     
-    Sforecast supports recursive (Nhorizong x 1-step) forecasts and in the future (under development) direct forecasts (Nhorizon models) over the Nhorizon interval. 
+    The out-of-sample train-test methodology works as follows. The first training and test window (before sliding) has a training set comprised of total observations - Ntest and test set size
+    Ntest. The model is retrained every Nhorizon steps, where Nhorizon defaults to 1. 
+    After the first train/test operation, the training set window slides forward by Nhorizon observations. The training set increases by Nhorizon observations, and the 
+    test set decreases by Nhorizon observations.
+    
+    The fitted transforms make_lags, scaler, and make_derived_attributes transform the data during test or predict operations.
+    During a prediction, (recursive or direct), the forecasted/predicted targets are input to the transformers in order to generate input to the fitted model and theren make the subsequent prediction.
+    
+    
+    The last fit corresponds to all observation in the dfXY input DataFrame. 
+    The fitted model, make_lags transform make_derived_attributes and scaler transform are returned in addition to test predictions, and index for each prediciton matching the input dataframe.
+
+    Sforecast supports recursive (Nhorizon x 1-step) forecasts and (under development) direct forecasts (Nhorizon models) over the Nhorizon interval. 
     The predict operation makes N-step (N x 1-step) recursive forcasts, correspondng to the recursive/single_step fit operation or Nhorizon direct forecasts (under development) correspondng to a direct forecast fit operation.
     
     **__init__(self,  y="y", model=None, ts_parameters=None)**
      Recieves inputs defining the sliding forecast model including ML model, time-series sliding/expanding window hyper-parameters, and ML feature scaling.
         
-        Args:
-            y (str or list): Forecast target (dependent) variable(s)
-            
-            model (ML Model): The ML model to be used in the forecast operation. It can be a SK Learn model (when model_type = "sk") or TensorFlow model if model_type = "tf". This variable is ignored if model_type = "cm" if (classical forecast moodel).
-            
-            model_type (str): indicates the type of model, "sk" (Sklearn), "cm" (statsmodel), or "tf" (TensorFlow).
-            
-            swin_parameters (dictionary): Dictionary of sliding/expanding window forecast model hyperparameters. Defaults to "None".
-                        
-                Nlags (int): Add a lagged variable to the training from 1 to Nlags . Lagged variables enable accounting for the auto-regressive properties of the correspondng variable(s) in the ML training. Defaults to 1.
-            
-                covars (list):  List of co-variate variables. If not already present, the y forecast variable(s) will be added to the covars list. Non-lagged co-variates (lag = 0) are removed from the training variables to avoid leakage. Lag values > 0 and <= Nlags are included in the training variables.
-                
-                catvars (list):  List of categorical variables, only relevant for TensorFlow models. Default = None.
-                
-                exenvars (list):  List of exogenous (e.g., input variables) and enodogenous (e.g., derived variables). Exenvars is for continuous, variables. Categorical variables are contained in catvars, not in exenvars.
-                Exenvars can be a list of lists, in which case it represents groups of variables that can be processed differently, for example by the TensorFlow model. 
-                For example, a TensorFlow models can process exenvars with a dense feed forward network and covariate lagged variables in an LSTM.
-            
-                Ntest (int): number of predictions to make. Defaults to 1. Ntest > 0 will cause the sliding forecast to divide the observations into trainng and test. The first training will use the last Ntest observatios as the test set and the previous observations as the training set. Ntest can be set to 0 in which case all observations are used as the training set and there are no test statistics to maintain.
-                
-                alpha (float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
-            
-                Nhorizon (int):  n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1.
-                
-                minmax (tuple): d;lsfasd;fjla;
-            
-                ci_method (string): The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows. 
-                
-                    * method from the mumpy percentile function, one of 
-                    
-                        * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"  
-                        
+        **Parameters**
+            * y (String or List): single target (dependent) variable (str) or list of target variables.  
+            * model (ML Model): The ML model to be used in the forecast operation. It can be a SK Learn model (model_type = "sk") or TensorFlow model (model_type = "tf"). This variable is ignored if model_type = "cm" (classical forecast moodel).  
+            * model_type (String): indicates the type of model, "sk" (Sklearn), "cm" (statsmodel or pdarima), or "tf" (TensorFlow).  
+            * swin_parameters (Dictionary): sliding window forecast model parameters.   
+                * Nlags (Integer): Number of lags for all target variables and covariates. Lagged variables enable accounting for the auto-regressive properties of the timeseries. Defaults to 1.  
+                * covars (List): List of covariate variables. If not already present, the y forecast variable(s) will be added to the covars list. Non-lagged covariates (lag = 0) are removed from the training variables to avoid leakage. Lag values > 0 and <= Nlags are included in the training variables.  
+                * catvars (List): List of categorical variables. This input is only relevant for TensorFlow models and is ignored otherwise. Default = None.  
+                * exenvars (List): List of exogenous (e.g., input variables) and enodogenous (e.g., derived variables). Exenvars is for continuous, variables. Categorical variables are contained in catvars, not in exenvars. Exenvars can be a list of lists, in which case it represents groups of variables that can be processed differently, for example by the TensorFlow model. For example, a TensorFlow models can process exenvars with a dense feed forward network and covariate lagged variables in an LSTM.  
+                * Ntest (Integer) - number of predictions to make. Defaults to 1. Ntest > 0 will cause the sliding forecast to divide the observations into trainng and test. The first training will use the last Ntest observatios as the test set and the previous observations as the training set. Ntest can be set to 0 in which case all observations are used as the training set and there are no test statistics to maintain.  
+                * alpha (Float): A number between 0 and 1 designating the donfidence interval spread. Defaults to 0.2 (80%).
+                * Nhorizon (Integer) - n-step (i.e., Nhorizon) forecast. For example, the sliding/expanding window will move forward by Nhorizons after Nhorizon predictions. Default to 1.  
+                * minmax (Tuple): Defaults to (None, None). Imposes and lower and upper limit on the forecast/predictions (and confidence intervals), respectively.
+                * ci_method (String) -  The method used to estimate the confidence interval. Defaults to "linear" from the numpy percentile function. Choices are as follows.   
+                    * "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"    
                     * "minmax" - the min and max values observed errors  
-                    
-                    * "tdistribution" - compute the t-distribution confidence interval  
-                    
-                horizon_predict_method (string): "single_step" recursive Nhorizon 1-step recursive forecasts over the Nhorizon interval, direct (Nhorizon models) over the Nhorizon period
-                
-                derived_attributes_transform: a transform for derived (endogenous/dependent) attributes. See example.ipynb for how to create derived endogenous attributes.
-                    
-            tf_params (Dictionary, optional): TensorFlow parameters. Defaults to None.
-                * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10
-                * Nepochs_t: Number of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.
-                * batch_size: Defaults to 32
-                * lstm: defaults to False
-                
-            cm_params (dictionary): parameters for the classical forecast models, when model_type = "cm"
-            
-                model (str): The supported models are "arima", "sarimax" and "auto_arima". THe Default is None.
-                
-                order (tuple): The order tuple contains the (p,d,q) parameters of the ARIMA and SARIMA models. The Default is None.
-                
-                seasonal_order (tuple): sarima seasonal order (P,D,Q,m). Defaults to (0, 0, 0, 0).
-            
-                enforce_stationarity (Boolean): sarima. Defualuts to True, 
-            
-                enforce_invertibility (Boolean):True, # sarimax
-                
-                start_p (int):  autoarima, starting p, lags. Defaults to 1.
-                
-                start_q (int): autoarima, starting q, ma error lags
-                
-                d (Boolean): autoarima differencing paramter. Defaults to None, discovered.
-                
-                seasonal (Boolean): autoarima. Defaults to True, 
-                
-                "max_p": autoarima, Default to None.
-                
-                "max_q": autoarima, Defaults to None, # auto arima
-            
-                test (string): autoarima stationarity test, Default ot "adf", automated Dickey-Fuller test
-                
-                start_P (int): 1, # autoarima, seasonal order
-                
-                start_Q (int): 1, autoarima, seasonal ma (error) order.
-                
-                max_P: autoarima, Defaults to None.
-                
-                max_Q: autoarima. Defaults to None.
-                
-                m (int): autoarima seasonal period (number of rows, i.e., obswervations) Defaults to 12 auto arima, 
-            
-                D (int): autoarim, sasonal difference. Defaults to None, discovered with seasonality = True
-            
-                trace (Boolean): autoarima True, # auto arima, print model AIC 
-            
-                error_action (str): autoarima. Defaults to "ignore", don't want to know if an order does not work
-            
-                suppress_warnings (Boolean): autoarima. Defaults to True.
-            
-                stepwise: autoarima. Defaults True, stepwise search
-            
-            scale_parameters (dictionary): input variables are scaled as designated by the parameters in the dictionary.
-            
-                mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If scale_params["mms_scale"] = None, then no variables are scaled with the MinMax scaler. If xscale["mms_cols"] = list of columns, then the corresponding columns are scaled with the MinMax scaler.
-                
-                ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to "all" in which case all input variables are scalled with the SKlearn StandardScaler scaler. If xscal_params["ss_scale"] = None, then no variables are scaled with the StandardScaler scaler. If xscale_params["ss_cols"] = list of columns, then the corresponding columns are scaled with StandardScaler.
-            
-            minmax (2-tuple): forecassts predictions and ci (confidence intervals) are constrained to fall between minmax[0] and minmax[1], given the corresponding min or max is != None. Defaults to (None, None).
+                    * "tdistribution" - compute the t-distribution confidence interval   
+                * horizon_predict_method (String): "single_step" or "direct". "single_step" indications predictions over the horizon window are recursive, meaning a single ML model with Nhorizon 1-step recursive predictions. "direct" indeicates that predictions over the horizon interval use the direct forecasting (Nhorizon models).
+                * derived_attributes_transform: a transform for derived (endogenous/dependent) attributes. See example.ipynb for how to create derived endogenous attributes.
+            * tf_params (Dictionary, optional) - TensorFlow parameters. Defaults to None.
+                * Nepochs_i: Number of training epochs for the first (intitial training). Defaults to 10.  
+                * Nepochs_t: Number of training (tuning) epochs for subsequent trainng, after the initial traiing. Defaults to 5.  
+                * batch_size: Defaults to 32.  
+                * lstm: defaults to False.  
+            * cm_params (Dictionary): parameters for the classical forecast models, when model_type = "cm"
+                * model (str): The supported models are "arima", "sarimax" and "auto_arima". Default is None.  
+                * order (tuple): SARIMA and ARIMA order tuple contains the (p,d,q) parameters of the ARIMA and SARIMA models. Defaults to None.  
+                * seasonal_order (tuple): sarima seasonal order (P,D,Q,m). Defaults to (0, 0, 0, 0).  
+                * enforce_stationarity (Boolean): sarima. Defualuts to True.  
+                * enforce_invertibility (Boolean): SARIMAX. Defaults to True.
+                * start_p (int):  autoarima, starting p, lags. Defaults to 1.  
+                * start_q (int): autoarima, starting q, ma error lags.  
+                * d (Boolean): autoarima differencing paramter. Defaults to None, discovered.  
+                * seasonal (Boolean): autoarima. Defaults to True.  
+                * "max_p": autoarima, Default to None.  
+                * "max_q": autoarima, Defaults to None.
+                * test (string): autoarima stationarity test, Default ot "adf", automated Dickey-Fuller test.  
+                * start_P (int): autoarima seasonal order. Defautls to 1. 
+                * start_Q (int): autoarima seasonal order. Defautls to 1. seasonal ma (error) order.  
+                * max_P: autoarima, Defaults to None.   
+                * max_Q: autoarima. Defaults to None.  
+                * m (int): autoarima seasonal period (number of observations (rows) corresponding to the season) Defaults to 12 auto arima,   
+                * D (int): autoarima, sasonal difference. Defaults to None, discovered with seasonality = True.  
+                * trace (Boolean): autoarima, defalults to True. Print model AIC.   
+                * error_action (str): autoarima. Defaults to "ignore", don't want to know if an order does not work.   
+                * suppress_warnings (Boolean): autoarima. Defaults to True.   
+                * stepwise: autoarima. Defaults True, stepwise search.  
+            * scale_parameters (Dictionary): input variables are scaled as designated by the parameters in the dictionary.  
+                * mms_cols (str or list): Defaults to "all" in which case all input variables are scalled with the SKlearn MinMax scaler. If mms_cols = None, then no variables are scaled with the MinMax scaler. If mms_cols = list of columns, then the corresponding columns are scaled with the MinMax scaler.  
+                * ss_cols (str or list): The ss_cols option takes precedence over mms_cols. Defaults to None. If ss_cols =  "all" all input variables are scalled with the SKlearn StandardScaler scaler. If xscale_params["ss_cols"] = list of columns, then the corresponding columns are scaled with StandardScaler. 
+                * minmax (2-tuple): forecassts predictions and ci (confidence intervals) are constrained to fall between minmax[0] and minmax[1]. Defaults to (None, None), meaning no lower or upper limits are imposed on the predictions and confidence intervals.
         
     **State Variables**
-    
-        metrics (dictionary of dictionaries):  {y (key): {MSE: number} , {MAE: number} , ... }
-        
-        model (ML Model):  ML Model. After fitting the variable corresponds to the trained model at the last window position.
-        
-        ts_params (dictionary): dictionary of sliding/expanding window model hyper-parameters.
-        
-        dfXYfit_last (DataFrame): the last row of the fitted dataframe. The dataframe includes covariate columns (note, unlagged covariates are not used for the fit or predict operations) and all columns (variables) used in the predict operation includind lagged covariates, exogenous variables, derived/endogenous variables, and categorical variables. Continuous variables (not covariates) are scaled according the scale_parameters input dictionary.
-        
-        df_pred (DataFrame): Dataframe containing the prediciton results. See sforecast.forecast() for additional information.
+        * metrics (dictionary of dictionaries):  {{y target variable): {MSE: number} , {MAE: number} } , ... }  
+        * model (ML Model):  ML Model. After fitting the variable corresponds to the trained model trained on all observations.  
+        * dfXYfit_last (DataFrame): the last row of the fitted dataframe. The dataframe includes covariate columns (note, unlagged covariates are not used for the fit or predict operations) and all columns (variables) used in the predict operation includind lagged covariates, exogenous variables, derived/endogenous variables, and categorical variables. Continuous variables (not covariates) are scaled according the scale_parameters input dictionary.  
+        * df_pred (DataFrame): Dataframe containing the prediciton results. See sforecast.fit() for additional information.  
 
     """
     def __init__(self,  y:list, model:None, model_type:None, xscale_parameters = None, 
@@ -2059,16 +2077,16 @@ class sforecast:
         
         Args:
             dfXY (DataFrame): input DataFrame containing the target variable, covariates (optional), exogenous continuous variables (optional), and categorical variables (optional).
+            
             verbose (bool): True or False. Verbose == True causes the printing of helpful information. Defaults to False.
 
         Returns:
-            DataFrame: forecast output including the following columns for each covariate.
-            
-            y_train: y training value at the corresponding observation for the initial window (before sliding). Values outside the initial window will be NaN. After the initial training, y values will then be shown under the y_test column.
-            y_test: y value (truth) corresponding to the prediction.
-            y_pred: y predicted (i.e. forecast) 
-            y_lower:  lower confidence limit
-            y_upper:  upper confidence limit
+            DataFrame with the forecast output including the following columns for each covariate.  
+                * y_train: y training value at the corresponding observation for the initial window (before sliding). Values outside the initial window will be NaN. After the initial training, y values will then be shown under the y_test column.  
+                * y_test: y value (truth) corresponding to the prediction.  
+                * y_pred: y predicted (i.e. forecast) 
+                * y_lower:  lower confidence limit  
+                * y_upper:  upper confidence limit  
         """
         
         # dfXY
@@ -2131,13 +2149,13 @@ class sforecast:
         
         Args:
             Nperiods (int): Indicates how many periods forward to forecast. Defaults to 1. 
-            dfexog (DataFrame, optional): Defaults to None. If the fit include exogenous variables (independent continous variables, not derived variables), then a dfexog input dataframe is required. The number of rows of dfexog must be <= Npriods.
-            dfcats (DataFrame, optional): Defaults to None. Required if the fit includes categorical variables. The categorical variables must be encodeded (e.f., SK label encoder) as they were for the fit operation.
-            ts_period (pandas time offset, optional): Defaults to None. Not required and is ignroed (a warning is issued) if the timeeries index is an integer. Required if the time-series index is a timestamp. The output forecast index will be successive timestamps with period ts_period.
+            dfexog (DataFrame, optional): Defaults to None. If the fit includes exogenous variables (independent continous variables), then a dfexog input dataframe is required. The number of rows of dfexog must be <= Npriods and the columns are the same as exogvars.
+            dfcats (DataFrame, optional): Defaults to None. This input object applies only to TensorFlow models. It is required if the fit includes categorical variables. The categorical variables must be encodeded (e.g., SK label encoder) in the same way as for the fit operation.
+            ts_period (pandas time offset, optional): Defaults to None. Not required if the timeseries index is an integer. It is required if the timeseries index is a timestamp. The input is ignroed (a warning is issued) if the timeeries index is an integer.
             verbose (bool, optional): Print helpful information to standard out when True. Defaults to False.
 
         Returns:
-            Dataframe: Output forecast for each target variable.
+            Dataframe including the forecast for each target variable.
         """
         if not isinstance(dfexogs,pd.DataFrame):
             if dfexogs != None: assert isinstance(dfexogs, pd.DataFrame) , "dfexogs input must be a Pandas DataFrame"
