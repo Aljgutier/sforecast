@@ -71,9 +71,8 @@ def forecast_confidence(df,alpha, Nhorizon = 1, error="error", method="linear", 
         Nhorizon (int, optional): _description_. Defaults to 1.
         error (str): Column which contains the error values from which the confidence interval is computed.
         method (str): Method to cacluate the confidence interval. Defaults to "linear". Defaults to "linear" from the numpy percentile function. Choices are as follows. 
-            * mumpy.percentil() function, method = one of
-                * ("inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased")
-            * "minmax" - the min and max values observed errors
+            * mumpy.percentil() function, method = one of -  "inverted_cdf",  "averaged_inverted_cdf", "inverted_cdf", "averaged_inverted_cdf","closest_observation", "interpolated_inverted_cdf", "hazen", "weibull", "linear", "median_unbiased ", "normal_unbiased"
+            * "minmax" - the min and max values of observed errors
             * "tdistribution" - compute the t-distribution confidence interval
         verbose (bool, optional): _description_. Defaults to False.
 
@@ -370,8 +369,9 @@ def train_test_predict(dfXY:DataFrame, y:list,  model:object, model_type="sk", c
     After the first train/test operation, the training set window slides forward by Nhorizon observations. The training set increases by Nhorizon observations, and the 
     test set decreases by Nhorizon observations. Predictions (y_pred) and actual (y_test) are returned based on each train-test window. 
     
-    The fitted transforms make_lags, scaler, and make_derived_attributes transform the data during test or predict operations.
-    During a prediction, (recursive or direct), the forecasted/predicted targets are input to the transformers in order to generate input to the fitted model and theren make the subsequent prediction.
+    The fitted transformers make_lags, scaler, and make_derived_attributes, transform the data during test or predict operations.
+    During a prediction, the forecasted/predicted targets are input to the transformers in order to 
+    generate lagged variables, derived variables, and scale. These are subsuquently input to the fitted model to make a prediction.
     
     The last fit corresponds to all observation in the dfXY input DataFrame. 
     The fitted model, make_lags transform make_derived_attributes, and scaler transform are returned in addition to test predictions, and prediction index (y_pred_idx) relating the prediciton to the input DataFrame.
@@ -401,7 +401,7 @@ def train_test_predict(dfXY:DataFrame, y:list,  model:object, model_type="sk", c
             * dfXY_train (DataFrame): fitted dfXY DataFrame including scaled variables exogvars, covariates, and derived attributes.
             * m (model): ML forecast model. When model_type = "sk" or "tf" and "cm" AUTO_ARIMA , m corresponds to the fitted model, after the last traiing.
             * model_fit: Fitted model for the case of model_type == "cm" ARIMA and ARIMAX , otherwise = None.
-            * i_initial_pred
+            * i_initial_pred: i-th (iloc) index corresponding to the first prediction
             * make_lags (transformer): fitted transformer for creating lagged variables.
             * scaler (transformer): fitted scaler for MinMaxScaler and or StandardScaler transformations.
             * make_derived_attributes: fitted make derived attributes transformer.
@@ -1781,9 +1781,10 @@ class sforecast:
     Ntest. The model is retrained every Nhorizon steps, where Nhorizon defaults to 1. 
     After the first train/test operation, the training set window slides forward by Nhorizon observations. The training set increases by Nhorizon observations, and the 
     test set decreases by Nhorizon observations.
-    
-    The fitted transforms make_lags, scaler, and make_derived_attributes transform the data during test or predict operations.
-    During a prediction, (recursive or direct), the forecasted/predicted targets are input to the transformers in order to generate input to the fitted model and theren make the subsequent prediction.
+
+    The fitted transformers make_lags, scaler, and make_derived_attributes, transform the data during test or predict operations.
+    During a prediction, the forecasted/predicted targets are input to the transformers in order to 
+    generate lagged variables, derived variables, and scale. These are subsuquently input to the fitted model to make a prediction.
     
     
     The last fit corresponds to all observation in the dfXY input DataFrame. 
