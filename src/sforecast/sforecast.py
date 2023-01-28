@@ -354,7 +354,7 @@ class minmaxstd_scaler(BaseEstimator,TransformerMixin):
         return df_scaled
     
 
-def train_test_predict(dfXY:DataFrame, y:list,  model:object, model_type="sk", cm_params=None,  scale_params = None,
+def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=None,  scale_params = None,
                     swin_params=None,  tf_params=None, fit = True, predict=False, pred_params = None, verbose=False , debug=False) -> list:
     """The train_test_predict() function is the work horse producing the fit (train and test) and predictions. 
     During the fit operation test_train_predict() receives the input observations (dfXY) and fits the make lags transform, scaler transform, and derived
