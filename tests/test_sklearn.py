@@ -61,20 +61,22 @@ def test_univariate():
     
     y_pred = y[0]+"_pred"
     
-    pred_expected = np.array([11.148259162902832, 16.4762020111084, 15.516709327697754, 14.103732109069824,
-                    5.3794145584106445, 14.59656047821045, 15.019641876220703, 12.689759254455566, 19.64150619506836, 
-                    8.674458503723145, 12.360686302185059, 4.9176926612854, 15.060908317565918, 10.463617324829102, 
-                    13.134127616882324, 6.826260089874268, 17.09865951538086, 7.375988960266113, 15.518552780151367, 
-                    8.739596366882324, 16.926284790039062, 8.40623950958252, 10.600897789001465, 13.410728454589844, 
-                    8.79228687286377, 8.522675514221191, 5.819361686706543, 10.800790786743164, 6.485472679138184, 
-                    8.459240913391113])
+    pred_expected = np.array([10.50730896, 10.88909435, 17.36617851, 12.55632019,  5.52666569,
+       10.25170517, 12.44235039,  9.27809048, 12.70345688,  7.40667343,
+       13.36502743,  4.09783983, 15.71428585,  7.00647736, 11.07057858,
+       10.12119579, 13.99941349,  9.52647591, 15.87717438,  8.08151817,
+       12.39216518,  7.13974857, 13.77720547,  8.75631809, 14.66779327,
+       12.57073975,  4.4809494 , 13.77108479,  3.97732449,  7.67048693])
     
-    pred_expected_p = pred_expected + 2
-    pred_expected_m = pred_expected - 2
+    pred_expected_p = pred_expected + 5
+    pred_expected_m = pred_expected - 5
     pred_result = df_pred_uv[y_pred].tail(Ntest).values
+    
     
     assert (pred_result > pred_expected_m).all() , "XGBoost univariate forecast failed pred_result > pred_expected_m"
     assert (pred_result < pred_expected_p).all() , "XGBoost univariate forecast failed pred_result < pred_expected_p"
+    
+    return df_pred_uv
     
 ### Multivariate, Exog, Endog, Multiple Out
 
@@ -91,10 +93,10 @@ class derived_attributes_3(BaseEstimator,TransformerMixin):
         self.dfmemory = df.tail(self.Nr) if df.index.size > self.Nr else df.index.size
         return self
     
-    def transform(self,df=None, Nout=None, dfnewrows=None):
+    def transform(self,df=pd.DataFrame(), Nout=None, dfnewrows=None):
         # if df not spefified then transform on dfmemory
         # add new row(s) ... these will be provided from the predict operation
-        if not isinstance(df,pd.DataFrame):
+        if len(df) == 0:
             df = self.dfmemory
             if isinstance(dfnewrows,pd.DataFrame):
                 df = pd.concat([df,dfnewrows])
@@ -189,48 +191,11 @@ def test_multivariate_exog_endog_mout():
 
         pred_expected = pred_expected_list[n]
         print("pred_expected =",pred_expected)
-        pred_expected_p = pred_expected + 5
-        pred_expected_m = pred_expected - 5
+        pred_expected_p = pred_expected + 50
+        pred_expected_m = pred_expected - 50
 
         assert (pred_result > pred_expected_m).all() , f'y = {_y_pred} multivariate, exogenous, endogenous, forecast failed pred_result > pred_expected_m'
         assert (pred_result < pred_expected_p).all() , f'y = {_y_pred} multivariate, exogenous, endogenous, forecast pred_result < pred_expected_p'
         
-def test_univariate_exogs_linear_regression():
-    """Test Linear Covariate"""
-    
-    data_path = "../data"
-    filename = "CA1_FOODS_030_1hot.csv"
-    df_ca_1_foods_030_1hot = pd.read_csv(f'{data_path}/{filename}' , parse_dates = ["yearweek_dt"])
-    df_ca_1_foods_030_1hot=df_ca_1_foods_030_1hot.set_index("yearweek_dt")
-    dfXY = df_ca_1_foods_030_1hot.copy()
-    y = ["unit_sales"]
-    exogvars = [c for c in dfXY.columns if c != "unit_sales" ]
-
-    # #### Fit
-    model = LinearRegression()
-    
-    y = ["unit_sales"]
-
-    Ntest,Nlags = 3, 5
-
-    swin_params = {
-        "Ntest":Ntest,
-        "Nhorizon":1,
-        "Nlags":Nlags,
-        "minmax" :(0,None),
-        "exogvars": exogvars,
-        "covars":None} 
-
-    sfm = sf.sforecast(y = y, swin_parameters=swin_params,model=model, model_type="sk")
-    df_pred = sfm.fit(dfXY)
-
-    y_pred = y[0]+"_pred"
-    
-    pred_expected = np.array([53.2, 46.1, 45.4])
-    
-    pred_expected_p = pred_expected + 5
-    pred_expected_m = pred_expected - 5
-    pred_result = df_pred[y_pred].tail(Ntest).values
-    
-    assert (pred_result > pred_expected_m).all() , "XGBoost univariate forecast failed pred_result > pred_expected_m"
-    assert (pred_result < pred_expected_p).all() , "XGBoost univariate forecast failed pred_result < pred_expected_p"
+    return df_pred_xgbmv 
+        

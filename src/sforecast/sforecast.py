@@ -224,13 +224,13 @@ class covarlags(BaseEstimator,TransformerMixin):
         self.dfmemory = df.tail(self.Nmemory) if df.index.size > self.Nmemory else df.index.size
         return self
     
-    def transform(self, df=None, Nout=None, dfnewrows=None, debug=False):
+    def transform(self, df=pd.DataFrame(), Nout=None, dfnewrows=pd.DataFrame(), debug=False):
         # if df not spefified then transform dfmemory
         # add new row(s) and update dfmemory
-        """Create lagged variables from covariates.
+        """Create lagged covariates.
 
         Args:
-            df (DataFrame, optional): _description_. Defaults to None.
+            df (DataFrame, optional): dataframe containing covariats. Defaults to empty dataframe..
             Nout (int, optional): Number of output rows. Defaults to None.
             dfnewrows (DataFrame, optional): new row to append to the DataFrame. The DataFrame memory will be updated with the last Nlags+1 rows. Defaults to None.
             debug (bool, optional): _description_. Defaults to False.
@@ -239,11 +239,9 @@ class covarlags(BaseEstimator,TransformerMixin):
             DataFrame with the addition of lagged variables
         """
         
-        if not isinstance(df,pd.DataFrame):
+        if len(df)==0:
             df = self.dfmemory
-            #print("covarlags.transform: dfmemory before new rows =")
-            #display(df.tail())
-            if isinstance(dfnewrows,pd.DataFrame):
+            if len(dfnewrows)>0:
                 df = pd.concat([df,dfnewrows])
                 self.dfmemory = df.tail(self.Nmemory)    
             
@@ -525,7 +523,7 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
             print("test_train_predict: N_loop_step = ",N_loop_step)
     
         # initialize additional varialbels 
-        make_lags = None  # default ot none ... None for cm models, not none for sk and tf models
+        make_lags = None  # default to none ... None for cm models, not none for sk and tf models
         make_derived_attributes = None # default to noe ...None for cm models, not none for sk and tf models
         scaler = None # # default to noe ...None for cm models, not none for sk and tf models
         
@@ -584,6 +582,7 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
             
             #### Covarlags
             if lags: #  need lags for cm if have derived_attributes
+
                 make_lags = covarlags(covars=covars,Nlags=Nlags)
                 if model_type == "tf":
                     if catvars != None:
@@ -594,7 +593,9 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
                         dfXY_train=make_lags.fit_transform(dfXY_train)
                         
                 else:
+                    
                     dfXY_train=make_lags.fit_transform(dfXY_train)
+
 
             # dfX_train ... after make lags 
             dfX_train = dfXY_train.drop(covars,axis=1)
@@ -972,17 +973,19 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
                             dfXY_pred = pd.DataFrame(data = {_cv:np.NaN for _cv in covars } , columns = covars, index = p_index)
                             
                             # update y with previous prediction in covarlags
+
                             if (fit == True and k > 0) or (predict == True and predict_cnt > 0): 
                                 # update the previous y in make_lags
+                                
                                 for _cv in covars:
                                     make_lags.set_last_y(_cv,y_pred_nda[_cv][predict_cnt-1], debug=debug)
                             # lags
-                            dfXY_pred = make_lags.transform(dfnewrows=dfXY_pred, Nout = 1, debug=debug)
+                            # def transform(self, df=None, Nout=None, dfnewrows=None, debug=False)
+                            dfXY_pred = make_lags.transform( pd.DataFrame(),dfnewrows=dfXY_pred, Nout = 1, debug=debug)
                             
                             
                             dfX_pred = dfXY_pred.drop(covars,axis=1)
-                            
-                                                            
+                                                          
                             # exogs
                             #dfXexen[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values if exogvars != None else dfXexen
                             if fit == True:
@@ -992,7 +995,8 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
                             
                             # derived attributes
                             if derived:
-                                dfX_pred = make_derived_attributes.transform(dfnewrows=dfX_pred,Nout=1 )
+                                
+                                dfX_pred = make_derived_attributes.transform(pd.DataFrame(),dfnewrows=dfX_pred,Nout=1 )
                              
                                 
                             # scale
@@ -1018,7 +1022,7 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
                             for _cv in covars:
                                 make_lags.set_last_y(_cv,y_pred_nda[_cv][predict_cnt-1])  #
                                     
-                        dfXY_pred = make_lags.transform(dfnewrows=dfXY_pred, Nout = 1, debug=debug)
+                        dfXY_pred = make_lags.transform(pd.DataFrame(),dfnewrows=dfXY_pred, Nout = 1, debug=debug)
                         dfX_pred = dfXY_pred.drop(covars,axis=1) 
                         
                         # exogs
@@ -1031,7 +1035,7 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
                         
                         # endogs ... derived 
                         if derived:
-                            dfX_pred = make_derived_attributes.transform(dfnewrows=dfX_pred,Nout=1 )
+                            dfX_pred = make_derived_attributes.transform(   pd.DataFrame(), dfnewrows=dfX_pred,Nout=1 )
                             
                         if debug == True:
                             exen_str = "w exenvars" if exenvars != None else ""
@@ -1189,11 +1193,11 @@ def train_test_predict(dfXY, y:list,  model:object, model_type="sk", cm_params=N
                                 dfXexen_pred[exogvars] = dfxy.iloc[i+k:i+k+1][exogvars].values if fit == True else pred_params["dfexogs"].iloc[k:k+1].values 
 
                             # make_lags
-                            dfXexen_pred = make_lags.transform(dfnewrows=dfXexen_pred, Nout = 1, debug=debug)
+                            dfXexen_pred = make_lags.transform(pd.DataFrame(),dfnewrows=dfXexen_pred, Nout = 1, debug=debug)
                             dfXexen_pred = dfXexen_pred.drop(y,axis=1)
                             
                             # derived attributes
-                            dfXexen_pred = make_derived_attributes.transform(dfnewrows=dfXexen_pred,Nout=1 )
+                            dfXexen_pred = make_derived_attributes.transform(pd.DataFrame(),dfnewrows=dfXexen_pred,Nout=1 )
                             dfXexen_pred = dfXexen_pred[exenvars]
                             
                             if debug == True:

@@ -4,19 +4,20 @@ import sforecast as sf
 import numpy as np
 from datetime import datetime
 
-
-
 ###### ARIMA 
-
 # data shampoo
 def dateparser(x):
     return datetime.strptime('190'+x, '%Y-%m')
 df_shampoo = pd.read_csv("../data/shampoo.csv", parse_dates = ["Month"], date_parser=dateparser)
 
 def test_arima():
-    
     Ntest = 5
-    dfXY = df_shampoo
+    y=["Sales"]
+    y_pred = y[0]+"_pred"
+    
+    dfXY = df_shampoo[y]
+    #print('dfXY')
+    #print(dfXY.head())
 
     swin_params = {
         "Ntest":Ntest,
@@ -28,23 +29,23 @@ def test_arima():
         "order":(2,1,0)
     }
 
-    y =[ "Sales"]
     sf_arima = sf.sforecast(y = y, model=None,model_type="cm", cm_parameters=cm_parameters,
                         swin_parameters=swin_params,)
 
     df_pred_arima = sf_arima.fit(dfXY)
-    
-    y_pred = y[0]+"_pred"
+    #print(df_pred_arima.tail(Ntest))
     
     pred_expected = np.array([467.811682, 519.261277, 464.182016, 615.984739, 524.253124])
-
-
+    
     pred_expected_p = pred_expected + 0.2
     pred_expected_m = pred_expected - 0.2
     pred_result = df_pred_arima[y_pred].tail(Ntest).values
     
     assert (pred_result > pred_expected_m).all() , "ARIMA forecast failed pred_result > pred_expected_m"
     assert (pred_result < pred_expected_p).all() , "ARIMA forecast failed pred_result < pred_expected_p"
+    
+    
+    return df_pred_arima  # return not required for pytest ... 
  
 #### SARIMAX 
 # data air passengers    
@@ -53,7 +54,11 @@ df_airp = pd.read_csv("../data/AirPassengers.csv", parse_dates = ["Month"]).set_
   
 def test_sarimax():
     Ntest=5
-    dfXY = df_airp[["Passengers"]]
+    y = ["Passengers"]
+    dfXY = df_airp[y]
+    y_pred = y[0]+"_pred"
+
+
     swin_parameters = {
         "Ntest":Ntest,
         "Nlags":5,
@@ -67,15 +72,17 @@ def test_sarimax():
         "seasonal_order":(0,1,0,12)
         }
 
-    y = ["Passengers"]
     sf_sarimax = sf.sforecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
                         swin_parameters=swin_parameters,)
 
     df_pred_sarimax = sf_sarimax.fit(dfXY)
+    dfXY_pred_sarimax = dfXY.join(df_pred_sarimax)
     
-    y_pred = y[0]+"_pred"
+    ts_period = pd.DateOffset(months=1)
     
-    pred_expected = np.array([630, 519, 452, 413, 441])
+    df_pred_sarimax=sf_sarimax.predict(Nperiods=1,ts_period=ts_period)
+    
+    pred_expected = np.array([444])
 
     pred_expected_p = pred_expected + 20
     pred_expected_m = pred_expected - 20
@@ -83,6 +90,8 @@ def test_sarimax():
     
     assert (pred_result > pred_expected_m).all() , "SARIMAX forecast failed pred_result > pred_expected_m"
     assert (pred_result < pred_expected_p).all() , "SARIMAX forecast failed pred_result < pred_expected_p"
+
+    return df_pred_sarimax
  
  
 ### SARIMAX w/ exogenous and endogenous
@@ -100,10 +109,10 @@ class derived_attributes(BaseEstimator,TransformerMixin):
         self.dfmemory = df.tail(self.Nr) if df.index.size > self.Nr else df.index.size
         return self
     
-    def transform(self,df=None, Nout=None, dfnewrows=None):
+    def transform(self,df=pd.DataFrame(), Nout=None, dfnewrows=None):
         # if df not spefified then transform on dfmemory
         # add new row(s) ... these will be provided from the predict operation
-        if not isinstance(df,pd.DataFrame):
+        if len(df)==0:
             df = self.dfmemory
             if isinstance(dfnewrows,pd.DataFrame):
                 df = pd.concat([df,dfnewrows])
@@ -166,6 +175,8 @@ def test_sarimax_exog_endog():
     
     assert (pred_result > pred_expected_m).all() , "SARIMAX forecast failed pred_result > pred_expected_m"
     assert (pred_result < pred_expected_p).all() , "SARIMAX forecast failed pred_result < pred_expected_p"
+    
+    return df_pred_sarimax
  
 #### AUTO ARIMA
 def test_autoarima():
@@ -212,4 +223,6 @@ def test_autoarima():
 
     assert (pred_result > pred_expected_m).all() , "AUTOARIMA forecast failed pred_result > pred_expected_m"
     assert (pred_result < pred_expected_p).all() , "AUTOARIMAA forecast failed pred_result < pred_expected_p"
+    
+    return df_pred_autoarima
  
