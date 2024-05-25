@@ -5,12 +5,12 @@ version: 2
 build:
   os:  ubuntu-22.04
   image: testing
-  tools: python: 3.9
+  tools: python: 3.9.19
 
 # Configuration
 
 python:
-  version: 3.9
+  version: 3.9.19
   install:
     - requirements: docs/requirements.txt
     - method: pip
