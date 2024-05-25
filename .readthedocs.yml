@@ -5,7 +5,7 @@ version: 2
 build:
   os:  ubuntu-22.04
   image: testing
-  tools: python: "3.9"
+  tools: python: 3.9
 
 # Configuration
 
