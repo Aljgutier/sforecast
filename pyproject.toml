@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "sforecast"
-version = "0.5.8"
+version = "0.6.2"
 description = "A framework for running forecasting models within a sliding/expanding window out-of-sample forecast fit (train/test) and prediction (forecasts). The package includes support of classical forecasting models, SK Learn supervised learning ML models, and TensorFlow deep learning models."
 authors = ["Alberto Gutierrez"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.9"
+python = ">=3.10"
 pandas = ">=1.4.0"
 beautifulplots = ">=0.2.6"
 tensorflow = ">=2.7.0"
@@ -15,6 +15,8 @@ statsmodels = ">=0.13.2"
 pmdarima = ">=1.8.0"
 scikit-learn = ">=1.4.2"
 xgboost = ">=2.0.3"
+regex = "^2024.5.15"
+scipy = "^1.13.1"
 
 [tool.poetry.dev-dependencies]
 sphinx-autoapi = "^1.9.0"
