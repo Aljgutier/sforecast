@@ -149,11 +149,4 @@ dmypy.json
 
 
 # data
-data/superstore_subcatsales_cdp.csv
-data/superstore_prodsales_cdp.csv
-data/superstore_catsales_cdp.csv
-data/sell_prices.csv
-data/sales_train_evaluation.csv
-data/calendar.csv
-data/m5_sales_7_items_events_cci_wide.csv
-data/sales_20_items_events_cci.csv
+data/*.csv
