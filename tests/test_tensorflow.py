@@ -8,14 +8,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from keras.utils.vis_utils import plot_model
+#from keras.utils.vis_utils import plot_model
 from keras.models import Model
 from keras.layers import Input, Dense, Flatten, Embedding, concatenate, Dropout
 from keras.layers import LSTM, GRU
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import LabelEncoder
-
-
 
 
 ##### data ... M5 Sales, 7 Items ... Daily
@@ -52,7 +50,6 @@ print(f'eindim = {eindim}')
 print(f'eoutdim = {eoutdim}')
 
 
-
 def test_univariate(_assert=True):
     
     # y forecast variable
@@ -65,24 +62,9 @@ def test_univariate(_assert=True):
 
     # display data
     
-    # Neural Network Initialization
     Nlags=5
-    inputs = Input((Nlags,))
-    h1 = Dense(Nlags, activation='relu')(inputs)
-    h2 = Dense(20, activation='relu')(h1)
-    h3 = Dense(10, activation='relu')(h2)
-    output = Dense(1)(h3) # linear output
-    model_tf_dense = Model(inputs=inputs, outputs=output)
-
-    # define optimizer and compile
-    optimizer = Adam(learning_rate=0.05, decay=.1)
-    model_tf_dense.compile(loss='mse', optimizer=optimizer)
-    print(model_tf_dense.summary())
-        
+    model_tf_dense = sf.get_dense_nn(Nlags)
     
-    # Model Initialization - WARNING
-    # ... recreate and compile the model ... reruning this cell will tune the existing model
-
     # Forecast - fit
     Ntest=10
     Nhorizon = 1
@@ -99,7 +81,7 @@ def test_univariate(_assert=True):
         "batch_size":100
         }
 
-    sfuvtf = sf.sforecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense, tf_parameters=tf_params)
+    sfuvtf = sf.sliding_forecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense, tf_parameters=tf_params)
 
     df_pred_uv = sfuvtf.fit(dfXYtf)
 
@@ -128,111 +110,29 @@ def test_univariate(_assert=True):
 
 
 #### Multivariate M5 7 items w Exogs and Endogs 
-def test_multivariate_exog_endog(_assert=True):
-    
-
+def test_multivariate_exog_endog_emb(_assert=True):
     
     dfXYtf = dfXY[covars+exogvars+le_catvars].copy()
     
-    # derived attributes custom transformer
-    from sklearn.base import BaseEstimator, TransformerMixin
+    Nrw = 3 # rolling window widith
+    variable_transform_dict = {
+    "unit_sales_CA1_FOODS_030" :[ "mean", "std"],
+    "unit_sales_CA1_HOUSEHOLD_416" : ["mean", "std"],
+    "unit_sales_CA1_FOODS_393": [ "mean", "std" ]
+    }
 
-    # pipeline/transformer development
-    # BaseEstimater ... get_params(), set_params() methods
-    # TransformerMixin ... fit_transform() method
-    Nr = 3
-    class derived_attributes_tf(BaseEstimator,TransformerMixin):
-        def __init__(self, Nr = Nr): 
-            self.Nr = Nr # slidig/rolling window rows
-            self.dfmemory = None
-            
-            v1 = "unit_sales_CA1_FOODS_030"
-            v2 = "unit_sales_CA1_HOUSEHOLD_416"
-            v3 = "unit_sales_CA1_FOODS_393"
-            self.vlist = [v1, v2, v3]
-            f1 = lambda x:x+"_m1_ravg"+str(Nr)
-            f2 = lambda x:x+"_m1_rstd"+str(Nr)
-            self.new_attributes = [f(v) for f in (f1, f2 )for v in self.vlist]
-        
-        def fit(self,df):
-            # ensure dataframe has enough rows
-            self.dfmemory = df.tail(self.Nr) if df.index.size > self.Nr else df.index.size
-                    # variables
-            
-            return self
-        
-        def transform(self,df=None, Nout=None, dfnewrows=None):
-            # if df not spefified then transform on dfmemory
-            # add new row(s) ... these will be provided from the predict operation
-            if len(df)==0:
-                df = self.dfmemory
-                if isinstance(dfnewrows,pd.DataFrame):
-                    df = pd.concat([df,dfnewrows])
-            self.dfmemory = df.tail(self.Nr) 
-            Nr=self.Nr
-            dfnew=df.copy()
-            
-            for v in self.vlist:
-                v_ravg = v+"_m1_ravg"+str(Nr)
-                v_rstd =  v+"_m1_rstd"+str(Nr)
-                v_m1 = v+"_m1"
-                dfnew[v_ravg] = dfnew[v_m1].rolling(window=Nr).mean()
-                dfnew[v_rstd] = dfnew[v_m1].rolling(window=Nr).std()
-
-            Nclip = self.Nr
-            return dfnew if Nout == None else dfnew.tail(Nout)
-        
-        def get_Nclip(self): # returns the number of initial rows that should be desgarded (clipped) for NaN avoidence
-            return self.Nr
-        
-        def get_derived_attribute_names(self):
-            Nr = self.Nr
-            return self.new_attributes    
+    derived_variables_tf = sf.rolling_transformer(variable_transform_dict, Nrw=Nrw)
+   
     
     # TensorFlow model ... Categorical Embeddings + Dense (Continuous Variables), Multiple Ouput
     Nlags = 5
     Nendogvars = 6
-    Ndense = Nlags * Ncovars + Nexogvars + Nendogvars #lagged covars (does not include unlagged covars) + exogvars
-    Nemb = Ncatvars
-    Nembout = sum(eoutdim)
-    Nout = len(covars)
-
-    print(f'Ndense = {Ndense}')
-    print(f'Nemb = {Nemb}')
-    print(f'Nout = {Nout}')
-
-    # Dense Network, 2 hidden layers, continuous variables ... covar lags and exogenous variables
-    cont_inputs = Input((Ndense,))
-    h1d = Dense(Ndense, activation='relu')(cont_inputs)
-
-    # embeddings, cat vars
-    cat_inputs_list = [ Input((1,)) for c in range(Nemb) ]  # one embedding for each categorical variable
-    emb_out_list = [Embedding(ein,eout,input_length=1)(cat) for ein,eout,cat in zip(eindim ,eoutdim,cat_inputs_list) ]
-    emb_flat_list = [Flatten()(emb_out) for emb_out in emb_out_list ]
-
-    # combined 
-    combined = concatenate([h1d]+emb_flat_list)
-    combined_d = Dropout(0.2)(combined)
-
-    # dense reduction layers
-    Nh1c = Ndense + Nembout # 
-    h1c = Dense(Nh1c, activation='relu')(combined_d)
-    h1c_d = Dropout(0.2)(h1c)
-    Nh2c = np.rint(Nh1c/2).astype(int)
-    h2c = Dense(Nh2c, activation='relu')(h1c_d)
-    h2c_d = Dropout(0.2)(h2c)
-
-    # output
-    output = Dense(Nout)(h2c_d)  # linear activation ... linear combination 
-    model_tf_dense_emb = Model(inputs=[cont_inputs, cat_inputs_list], outputs=output)
-
-    # define optimizer and compile ...
-    optimizer = Adam(learning_rate=0.05, decay=.1)
-    model_tf_dense_emb.compile(loss='mse', optimizer=optimizer)
-
+    
+    tf_model_dense_emb= sf.get_dense_emb_nn(dfXYtf, Nlags, le_catvars, Ncovars= Ncovars, Nendogs = Nendogvars, Nexogs = Nexogvars)
+    
     ### fit test/strain
     y = ["unit_sales_CA1_FOODS_030", "unit_sales_CA1_HOUSEHOLD_416" ,  "unit_sales_CA1_FOODS_393" ]
-
+    
     # forecast fit
     Ntest = 5
     Nhorizon = 1
@@ -244,7 +144,7 @@ def test_multivariate_exog_endog(_assert=True):
         "covars":covars,
         "exogvars":exogvars,
         "catvars":le_catvars,
-        "derived_attributes_transform": derived_attributes_tf
+        "derived_attributes_transform": derived_variables_tf
         }  
 
     tf_params = {
@@ -253,7 +153,7 @@ def test_multivariate_exog_endog(_assert=True):
         "batch_size":100  
     }
 
-    sfmvexen = sf.sforecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense_emb, tf_parameters=tf_params)
+    sfmvexen = sf.sliding_forecast(y = y, model_type="tf", swin_parameters=swin_params,model= tf_model_dense_emb, tf_parameters=tf_params)
     
     df_pred = sfmvexen.fit(dfXYtf)
     
@@ -400,7 +300,7 @@ def test_exengroups(_assert=True):
     model_tf_dense2_emb_so.compile(loss='mse', optimizer=optimizer)
     
 
-    sf_tf_dense_emb_so = sf.sforecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense2_emb_so, tf_parameters=tf_params)
+    sf_tf_dense_emb_so = sf.sliding_forecast(y = y, model_type="tf", swin_parameters=swin_params,model=model_tf_dense2_emb_so, tf_parameters=tf_params)
 
     df_pred = sf_tf_dense_emb_so.fit(dfXY)
     

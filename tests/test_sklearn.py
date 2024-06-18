@@ -56,7 +56,7 @@ def test_univariate():
 
     xgb_model = XGBRegressor(n_estimators = 10, seed = 42, max_depth=5) 
     
-    sfuv =  sf.sforecast(y = y, swin_parameters=swin_params,model=xgb_model,model_type="sk")
+    sfuv =  sf.sliding_forecast(y = y, swin_parameters=swin_params,model=xgb_model,model_type="sk")
     df_pred_uv = sfuv.fit(dfXY)
     
     y_pred = y[0]+"_pred"
@@ -80,10 +80,23 @@ def test_univariate():
     
 ### Multivariate, Exog, Endog, Multiple Out
 
+# -- transform can be one transform (str) or list
+Nrw = 3 # rolling window widith
+variable_transform_dict = {
+    "Quantity_Furniture":["mean","std"],
+    "Quantity_Office Supplies": ["mean","std"],
+    "Quantity_Technology": ["mean","std"]
+}
+
+derived_variables_transformer = sf.rolling_transformer(variable_transform_dict, Nrw=Nrw)
+
+
+
+
 # engogenous derived attributes
 from sklearn.base import BaseEstimator, TransformerMixin
 Nr = 3
-class derived_attributes_3(BaseEstimator,TransformerMixin):
+class x_derived_attributes_3(BaseEstimator,TransformerMixin):
     def __init__(self, Nr = Nr): 
         self.Nr = Nr # slidig/rolling window rows
         self.dfmemory = None
@@ -143,13 +156,13 @@ def test_multivariate_exog_endog_mout():
         "minmax" :(0,None),
         "covars":[ "Quantity_Furniture", "Quantity_Office Supplies", "Quantity_Technology"],
         "exogvars":"dayofweek",
-        "derived_attributes_transform":derived_attributes_3 # Endogenous Variables
+        "derived_attributes_transform":derived_variables_transformer  # Endogenous Variables
         } 
 
     xgb_model = XGBRegressor(n_estimators = 10, seed = 42, max_depth=5) 
 
     # sliding forecast model and forecast
-    sfxgbmv = sf.sforecast(y = y, swin_parameters=swin_params,model=xgb_model,model_type="sk")
+    sfxgbmv = sf.sliding_forecast(y = y, swin_parameters=swin_params,model=xgb_model,model_type="sk")
     df_pred_xgbmv = sfxgbmv.fit(dfXY)
     
     ypred = y[0]+"_pred"

@@ -29,7 +29,7 @@ def test_arima():
         "order":(2,1,0)
     }
 
-    sf_arima = sf.sforecast(y = y, model=None,model_type="cm", cm_parameters=cm_parameters,
+    sf_arima = sf.sliding_forecast(y = y, model=None,model_type="cm", cm_parameters=cm_parameters,
                         swin_parameters=swin_params,)
 
     df_pred_arima = sf_arima.fit(dfXY)
@@ -72,7 +72,7 @@ def test_sarimax():
         "seasonal_order":(0,1,0,12)
         }
 
-    sf_sarimax = sf.sforecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
+    sf_sarimax = sf.sliding_forecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
                         swin_parameters=swin_parameters,)
 
     df_pred_sarimax = sf_sarimax.fit(dfXY)
@@ -98,42 +98,15 @@ def test_sarimax():
  
 from sklearn.base import BaseEstimator, TransformerMixin
 
-Nr = 3
-class derived_attributes(BaseEstimator,TransformerMixin):
-    def __init__(self, Nr = Nr): 
-        self.Nr = Nr # slidig/rolling window rows
-        self.dfmemory = None
-    
-    def fit(self,df):
-        # ensure dataframe has enough rows
-        self.dfmemory = df.tail(self.Nr) if df.index.size > self.Nr else df.index.size
-        return self
-    
-    def transform(self,df=pd.DataFrame(), Nout=None, dfnewrows=None):
-        # if df not spefified then transform on dfmemory
-        # add new row(s) ... these will be provided from the predict operation
-        if len(df)==0:
-            df = self.dfmemory
-            if isinstance(dfnewrows,pd.DataFrame):
-                df = pd.concat([df,dfnewrows])
-        self.dfmemory = df.tail(self.Nr) 
-        Nr=self.Nr
-        dfnew=df.copy()
-        
-        dfnew["Passengers_m1_ravg"+str(Nr)] = dfnew["Passengers_m1"].rolling(window=Nr).mean()  
-        dfnew["Passengers_m1_rstd"+str(Nr)] = dfnew["Passengers_m1"].rolling(window=Nr).std()
-        # dfnew=dfnew.iloc[Nr:] # do not toss out first Nr rows since they will be NA  this will be managed by sforecast
-    
-        Nclip = self.Nr
-        return dfnew if Nout == None else dfnew.tail(Nout)
-    
-    def get_Nclip(self): # returns the number of initial rows are desgarded (clipped) for NaN avoidence
-        return self.Nr
-    
-    def get_derived_attribute_names(self):
-        Nr = self.Nr
-        return [ "Passengers_m1_ravg"+str(Nr), "Passengers_m1_rstd"+str(Nr) ]
- 
+
+
+Nrw = 3 # rolling window widith
+variable_transform_dict = {
+    "Passengers": ["mean","std"]
+}
+
+derived_variables_transformer = sf.rolling_transformer(variable_transform_dict, Nrw=Nrw)
+
  
 def test_sarimax_exog_endog():
     # Exogenous variables
@@ -150,7 +123,7 @@ def test_sarimax_exog_endog():
         "minmax" :(0,None),
         "Nhorizon":1,
         "exogvars": exogvars,
-        "derived_attributes_transform":derived_attributes
+        "derived_attributes_transform":derived_variables_transformer 
         }
 
     cm_parameters = {
@@ -160,7 +133,7 @@ def test_sarimax_exog_endog():
         }
 
     y = ["Passengers"]
-    sf_sarimax = sf.sforecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
+    sf_sarimax = sf.sliding_forecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
                         swin_parameters=swin_parameters,)
 
     df_pred_sarimax = sf_sarimax.fit(dfXY)
@@ -207,7 +180,7 @@ def test_autoarima():
     }
 
     y = ["Passengers"]
-    sf_autoarima = sf.sforecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
+    sf_autoarima = sf.sliding_forecast(y = y, model=None, model_type="cm", cm_parameters=cm_parameters,
                         swin_parameters=swin_params,)
 
     df_pred_autoarima = sf_autoarima.fit(dfXY)
