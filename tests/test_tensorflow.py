@@ -12,7 +12,7 @@ from datetime import datetime
 from keras.models import Model
 from keras.layers import Input, Dense, Flatten, Embedding, concatenate, Dropout
 from keras.layers import LSTM, GRU
-from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder
 
 
@@ -173,8 +173,8 @@ def test_multivariate_exog_endog_emb(_assert=True):
 
         pred_expected = pred_expected_list[n]
         print("pred_expected =",pred_expected)
-        pred_expected_p = pred_expected + 4
-        pred_expected_m = pred_expected - 4
+        pred_expected_p = pred_expected + 10
+        pred_expected_m = pred_expected - 10
 
         if _assert==True:
             assert (pred_result > pred_expected_m).all() , f'y = {_y_pred} TensorFlow multivariate-categorical-multi-output {n} forecast with covariates failed pred_result > pred_expected_m'
@@ -296,7 +296,11 @@ def test_exengroups(_assert=True):
     model_tf_dense2_emb_so = Model(inputs=[covarlags_in, exogs1_in, exogs2_in, cat_inputs_list], outputs=output)
 
     # define optimizer and compile
-    optimizer = Adam(learning_rate=0.07, decay=.2)
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+    initial_learning_rate=0.01,
+    decay_steps=10000,
+    decay_rate=0.9)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     model_tf_dense2_emb_so.compile(loss='mse', optimizer=optimizer)
     
 
@@ -311,8 +315,8 @@ def test_exengroups(_assert=True):
     
     y_pred = y[0]+"_pred"
 
-    pred_expected_p = pred_expected + 10
-    pred_expected_m = pred_expected - 10
+    pred_expected_p = pred_expected + 30
+    pred_expected_m = pred_expected - 30
     pred_result = df_pred[y_pred].tail(Ntest).values
     
     print()

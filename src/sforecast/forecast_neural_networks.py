@@ -1,7 +1,8 @@
 from keras.models import Model
 from keras.layers import Input, Dense, Flatten, Embedding, concatenate, Dropout
 from keras.layers import LSTM, GRU
-from tensorflow.keras.optimizers import Adam
+#from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
 import numpy as np
 import pandas as pd
 
@@ -44,13 +45,18 @@ def get_dense_nn(Nlags:int,
     # define optimizer and compile ...
     # decay warning
     # https://stackoverflow.com/questions/74734685/how-to-fix-this-value-error-valueerror-decay-is-deprecated-in-the-new-keras-o
-    optimizer = Adam(learning_rate=0.05, decay=.1)
+    
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+    initial_learning_rate=0.01,
+    decay_steps=10000,
+    decay_rate=0.9)
+    
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     nn_model_dense.compile(loss='mse', optimizer=optimizer)
 
     print(nn_model_dense.summary())
 
     return nn_model_dense
-
 
 def get_dense_emb_nn(df: pd.DataFrame,
                     Nlags:int, 
@@ -117,7 +123,12 @@ def get_dense_emb_nn(df: pd.DataFrame,
     nn_model_dense_emb = Model(inputs=[cont_inputs] + cat_inputs_list, outputs=output)
 
     # define optimizer and compile ...
-    optimizer = Adam(learning_rate=0.05, decay=.1)
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+    initial_learning_rate=0.01,
+    decay_steps=10000,
+    decay_rate=0.9)
+    
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     nn_model_dense_emb.compile(loss='mse', optimizer=optimizer)
 
     print(nn_model_dense_emb.summary())
